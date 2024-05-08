@@ -30,7 +30,7 @@ func getArgs() Args {
 	flag.Parse()
 
 	if *inPortPtr == 0 || *outPortPtr == 0 {
-		fmt.Printf("%v: Both -in and -out ports must be specified\n", strings.Join(os.Args, " "))
+		fmt.Printf("%v: Both -in-port and -out-port ports must be specified\n", strings.Join(os.Args, " "))
 		fmt.Println("Run with -help for usage.")
 
 		os.Exit(1)
