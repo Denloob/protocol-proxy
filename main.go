@@ -1,15 +1,20 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"os"
+	"os/exec"
+	"regexp"
 	"strings"
 	"time"
+	"unicode"
 )
 
 type Args struct {
@@ -34,7 +39,7 @@ func getArgs() Args {
 	return Args{*inPortPtr, *outPortPtr, *outIPPtr}
 }
 
-func forward(source io.Reader, dest io.Writer) {
+func forward(source io.Reader, dest io.Writer, handleTransmittion func([]byte) []byte) {
 	buffer := make([]byte, 1<<16)
 	for {
 		size, err := source.Read(buffer)
@@ -42,9 +47,200 @@ func forward(source io.Reader, dest io.Writer) {
 			log.Fatalf("Read failed: %v", err)
 		}
 
-		_, err = dest.Write(buffer[:size])
+		newBuffer := handleTransmittion(buffer[:size])
+		if newBuffer == nil { // Packet dropped, skip
+			continue
+		}
+
+		_, err = dest.Write(newBuffer)
 		if err != nil {
 			log.Fatalf("Write failed: %v", err)
+		}
+	}
+}
+
+type QuestionDefault int
+
+const (
+	QUESTION_WITHOUT_DEFAULT QuestionDefault = iota
+	QUESTION_DEFAULT_YES
+	QUESTION_DEFAULT_NO
+)
+
+func ToUpper(char byte) byte {
+	return byte(unicode.ToUpper(rune(char)))
+}
+
+func askYesNo(question string, defaultAnswer QuestionDefault) bool {
+
+	switch defaultAnswer {
+	case QUESTION_WITHOUT_DEFAULT:
+		question += " (y/n) "
+	case QUESTION_DEFAULT_YES:
+		question += " (Y/n) "
+	case QUESTION_DEFAULT_NO:
+		question += " (y/N) "
+	}
+
+	for {
+		fmt.Print(question)
+
+		var input string
+		fmt.Scanln(&input)
+
+		if len(input) != 0 {
+			switch ToUpper(input[0]) {
+			case 'Y':
+				return true
+			case 'N':
+				return false
+			}
+		}
+
+		if defaultAnswer == QUESTION_WITHOUT_DEFAULT {
+			continue
+		}
+
+		return defaultAnswer == QUESTION_DEFAULT_YES
+	}
+}
+
+func isCharacter(char byte) bool {
+	return ' ' <= char && char <= '~'
+}
+
+const DEFAULT_EXTRACT_STRINGS_MIN_LENGTH = 4
+
+func extractStrings(buffer []byte, minStringLength int) []string {
+	var foundStrings []string
+
+	var stringBegin int
+	insideString := false
+
+	for i, char := range buffer {
+		if !isCharacter(char) {
+			if insideString && i-stringBegin >= minStringLength {
+				foundStrings = append(foundStrings, string(buffer[stringBegin:i]))
+				insideString = false
+			}
+			continue
+		}
+
+		if !insideString {
+			insideString = true
+			stringBegin = i
+		}
+	}
+
+	if insideString && len(buffer)-stringBegin >= minStringLength {
+		foundStrings = append(foundStrings, string(buffer[stringBegin:]))
+	}
+
+	return foundStrings
+}
+
+func createTransmittionHandle(transmittionDirection string) func(buffer []byte) []byte {
+	return func(buffer []byte) []byte {
+		firstRun := true
+		for {
+			if !firstRun {
+				fmt.Println("You may interact with the same packet again.")
+			} else {
+				fmt.Printf("%s: received %d bytes. ", transmittionDirection, len(buffer))
+				firstRun = false
+			}
+
+			if !askYesNo("View?", QUESTION_DEFAULT_YES) {
+				return buffer
+			}
+
+			var choice byte
+			for {
+				fmt.Println("Action? [D]rop/view [H]ex/view hexdum[P]/view [S]trings/he[X] overwrite/[A]scii overwrite/open in [E]ditor/[N]othing")
+				var input string
+				fmt.Scanln(&input)
+				if len(input) == 0 {
+					continue
+				}
+
+				choice = ToUpper(input[0])
+				switch choice {
+				default:
+					fmt.Printf("Invalid action: %c\n", choice)
+					continue
+				case 'D', 'H', 'P', 'S', 'O', 'X', 'A', 'E', 'N':
+				}
+				break
+			}
+
+			switch choice {
+			case 'D':
+				fmt.Println("The packet was dropped.")
+				return nil
+			case 'H':
+				fmt.Printf("%x\n", buffer)
+			case 'P':
+				fmt.Println(hex.Dump(buffer))
+			case 'S':
+				extractedStrings := extractStrings(buffer, DEFAULT_EXTRACT_STRINGS_MIN_LENGTH)
+				if len(extractedStrings) > 0 {
+					fmt.Printf("%d strings found\n---\n", len(extractedStrings))
+					fmt.Println(strings.Join(extractedStrings, "\n"))
+					fmt.Printf("\n")
+				} else {
+					fmt.Println("No strings found")
+				}
+			case 'X':
+				var input string
+				fmt.Println("Please enter the hex string to overwrite the packet with:")
+				fmt.Scanln(&input)
+				newBuffer := make([]byte, hex.DecodedLen(len(input)))
+				size, err := hex.Decode(newBuffer, []byte(input))
+				if err != nil {
+					fmt.Println(err)
+					continue
+				}
+				buffer = newBuffer[:size]
+			case 'A':
+				fmt.Println(`NOTE: use \n for new lines, \\n for literal '\n'. Entering a new line will send the packet.`)
+				scanner := bufio.NewScanner(os.Stdin)
+				if !scanner.Scan() {
+					log.Printf("Failed to read a line: %v", scanner.Err())
+					continue
+				}
+
+				input := scanner.Text()
+				newlineRegex := regexp.MustCompile(`[^\\]\\n`)
+				input = newlineRegex.ReplaceAllString(input, "\n")
+				buffer = []byte(input)
+			case 'E':
+				tempfile, err := os.CreateTemp("", "hexdump")
+				if err != nil {
+					log.Println(err)
+					continue
+				}
+				defer os.Remove(tempfile.Name())
+
+				filename := tempfile.Name()
+
+				tempfile.Write(buffer)
+				tempfile.Close()
+
+				editor := os.Getenv("EDITOR")
+
+				cmd := exec.Command(editor, filename)
+				cmd.Stdin = os.Stdin
+				cmd.Stdout = os.Stdout
+				cmd.Run()
+
+				newBuffer, err := os.ReadFile(filename)
+				if err != nil {
+					log.Println(err)
+					continue
+				}
+
+				buffer = newBuffer
+			}
 		}
 	}
 }
@@ -75,8 +271,8 @@ func main() {
 				log.Fatalf("Failed to dial: %v", err)
 			}
 
-			go forward(inConn, outConn)
-			go forward(outConn, inConn)
+			go forward(inConn, outConn, createTransmittionHandle("in->out"))
+			go forward(outConn, inConn, createTransmittionHandle("out->in"))
 		}(conn)
 	}
 }
