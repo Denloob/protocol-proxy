@@ -139,6 +139,103 @@ func extractStrings(buffer []byte, minStringLength int) []string {
 	return foundStrings
 }
 
+func inputAction() byte {
+	for {
+		fmt.Println("Action? [D]rop/view [H]ex/view hexdum[P]/view [S]trings/he[X] overwrite/[A]scii overwrite/open in [E]ditor/[N]othing")
+		var input string
+		fmt.Scanln(&input)
+		if len(input) == 0 {
+			continue
+		}
+
+		choice := ToUpper(input[0])
+
+		switch choice {
+		case 'D', 'H', 'P', 'S', 'O', 'X', 'A', 'E', 'N':
+			return choice
+		default:
+			fmt.Printf("Invalid action: %c\n", choice)
+		}
+	}
+}
+
+func executeAction(action byte, buffer []byte) []byte {
+	switch action {
+	case 'D':
+		fmt.Println("The packet was dropped.")
+		return nil
+	case 'N':
+		return buffer
+	case 'H':
+		fmt.Printf("%x\n", buffer)
+		return buffer
+	case 'P':
+		fmt.Println(hex.Dump(buffer))
+		return buffer
+	case 'S':
+		extractedStrings := extractStrings(buffer, DEFAULT_EXTRACT_STRINGS_MIN_LENGTH)
+		if len(extractedStrings) > 0 {
+			fmt.Printf("%d strings found\n---\n", len(extractedStrings))
+			fmt.Println(strings.Join(extractedStrings, "\n"))
+			fmt.Printf("\n")
+		} else {
+			fmt.Println("No strings found")
+		}
+		return buffer
+	case 'X':
+		var input string
+		fmt.Println("Please enter the hex string to overwrite the packet with:")
+		fmt.Scanln(&input)
+		newBuffer := make([]byte, hex.DecodedLen(len(input)))
+		size, err := hex.Decode(newBuffer, []byte(input))
+		if err != nil {
+			fmt.Println(err)
+			return buffer
+		}
+		return newBuffer[:size]
+	case 'A':
+		fmt.Println(`NOTE: use \n for new lines, \\n for literal '\n'. Entering a new line will send the packet.`)
+		scanner := bufio.NewScanner(os.Stdin)
+		if !scanner.Scan() {
+			log.Printf("Failed to read a line: %v", scanner.Err())
+			return buffer
+		}
+
+		input := scanner.Text()
+		newlineRegex := regexp.MustCompile(`[^\\]\\n`)
+		input = newlineRegex.ReplaceAllString(input, "\n")
+		return []byte(input)
+	case 'E':
+		tempfile, err := os.CreateTemp("", "hexdump")
+		if err != nil {
+			log.Println(err)
+			return buffer
+		}
+		defer os.Remove(tempfile.Name())
+
+		filename := tempfile.Name()
+
+		tempfile.Write(buffer)
+		tempfile.Close()
+
+		editor := os.Getenv("EDITOR")
+
+		cmd := exec.Command(editor, filename)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Run()
+
+		newBuffer, err := os.ReadFile(filename)
+		if err != nil {
+			log.Println(err)
+			return buffer
+		}
+		return newBuffer
+	default:
+		panic(fmt.Sprintf("Invalid action: %c", action))
+	}
+}
+
 func createTransmittionHandle(transmittionDirection string) func(buffer []byte) []byte {
 	return func(buffer []byte) []byte {
 		firstRun := true
@@ -154,92 +251,11 @@ func createTransmittionHandle(transmittionDirection string) func(buffer []byte) 
 				return buffer
 			}
 
-			var choice byte
-			for {
-				fmt.Println("Action? [D]rop/view [H]ex/view hexdum[P]/view [S]trings/he[X] overwrite/[A]scii overwrite/open in [E]ditor/[N]othing")
-				var input string
-				fmt.Scanln(&input)
-				if len(input) == 0 {
-					continue
-				}
+			action := inputAction()
+			buffer = executeAction(action, buffer)
 
-				choice = ToUpper(input[0])
-				switch choice {
-				default:
-					fmt.Printf("Invalid action: %c\n", choice)
-					continue
-				case 'D', 'H', 'P', 'S', 'O', 'X', 'A', 'E', 'N':
-				}
-				break
-			}
-
-			switch choice {
-			case 'D':
-				fmt.Println("The packet was dropped.")
+			if buffer == nil {
 				return nil
-			case 'H':
-				fmt.Printf("%x\n", buffer)
-			case 'P':
-				fmt.Println(hex.Dump(buffer))
-			case 'S':
-				extractedStrings := extractStrings(buffer, DEFAULT_EXTRACT_STRINGS_MIN_LENGTH)
-				if len(extractedStrings) > 0 {
-					fmt.Printf("%d strings found\n---\n", len(extractedStrings))
-					fmt.Println(strings.Join(extractedStrings, "\n"))
-					fmt.Printf("\n")
-				} else {
-					fmt.Println("No strings found")
-				}
-			case 'X':
-				var input string
-				fmt.Println("Please enter the hex string to overwrite the packet with:")
-				fmt.Scanln(&input)
-				newBuffer := make([]byte, hex.DecodedLen(len(input)))
-				size, err := hex.Decode(newBuffer, []byte(input))
-				if err != nil {
-					fmt.Println(err)
-					continue
-				}
-				buffer = newBuffer[:size]
-			case 'A':
-				fmt.Println(`NOTE: use \n for new lines, \\n for literal '\n'. Entering a new line will send the packet.`)
-				scanner := bufio.NewScanner(os.Stdin)
-				if !scanner.Scan() {
-					log.Printf("Failed to read a line: %v", scanner.Err())
-					continue
-				}
-
-				input := scanner.Text()
-				newlineRegex := regexp.MustCompile(`[^\\]\\n`)
-				input = newlineRegex.ReplaceAllString(input, "\n")
-				buffer = []byte(input)
-			case 'E':
-				tempfile, err := os.CreateTemp("", "hexdump")
-				if err != nil {
-					log.Println(err)
-					continue
-				}
-				defer os.Remove(tempfile.Name())
-
-				filename := tempfile.Name()
-
-				tempfile.Write(buffer)
-				tempfile.Close()
-
-				editor := os.Getenv("EDITOR")
-
-				cmd := exec.Command(editor, filename)
-				cmd.Stdin = os.Stdin
-				cmd.Stdout = os.Stdout
-				cmd.Run()
-
-				newBuffer, err := os.ReadFile(filename)
-				if err != nil {
-					log.Println(err)
-					continue
-				}
-
-				buffer = newBuffer
 			}
 		}
 	}
