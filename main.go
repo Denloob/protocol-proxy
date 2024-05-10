@@ -261,9 +261,8 @@ func createTransmittionHandle(transmittionDirection string) func(buffer []byte) 
 	}
 }
 
-func main() {
-	args := getArgs()
 
+func runProxy(args Args) {
 	l, err := net.Listen("tcp", fmt.Sprintf(":%d", args.inPort))
 	if err != nil {
 		log.Fatal(err)
@@ -291,4 +290,8 @@ func main() {
 			go forward(outConn, inConn, createTransmittionHandle("out->in"))
 		}(conn)
 	}
+}
+
+func main() {
+	runProxy(getArgs())
 }
