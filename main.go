@@ -240,12 +240,31 @@ func executeAction(action byte, buffer []byte) []byte {
 	}
 }
 
-func (proxy *ProxyModel) createTransmittionHandler(transmittionDirection string) func(buffer []byte) []byte {
+type TransmittionDirection int
+
+const (
+	TRANSMITTION_DIRECTION_TO_SERVER TransmittionDirection = iota
+	TRANSMITTION_DIRECTION_TO_CLIENT
+)
+
+func (direction TransmittionDirection) String() string {
+    switch direction {
+    case TRANSMITTION_DIRECTION_TO_SERVER:
+        return "→"
+    case TRANSMITTION_DIRECTION_TO_CLIENT:
+        return "←"
+    default:
+        panic("Invalid direction")
+    }
+}
+
+func (proxy *ProxyModel) createTransmittionHandler(transmittionDirection TransmittionDirection) func(buffer []byte) []byte {
 	return func(buffer []byte) []byte {
 		proxy.messages = append(proxy.messages, TCPMessage{
-			message: buffer,
-			status:  "Pending",
-			time:    time.Now(),
+			message:   buffer,
+			status:    "Pending",
+			time:      time.Now(),
+			direction: transmittionDirection,
 		})
 		return buffer
 	}
@@ -273,9 +292,14 @@ type Model struct {
 type Status string
 
 type TCPMessage struct {
-	message []byte
-	status  Status
-	time    time.Time
+	message   []byte
+	status    Status
+	time      time.Time
+	direction TransmittionDirection
+}
+
+func (message TCPMessage) String() string {
+    return fmt.Sprintf("[%v] %v %v (%v bytes)", message.time.Format(time.TimeOnly), message.direction, message.status, len(message.message))
 }
 
 type Proxy struct {
@@ -305,7 +329,7 @@ func (p ProxyModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (p ProxyModel) View() string {
 	var res string
 	for _, message := range p.messages {
-		res += fmt.Sprintf("%s: %d bytes\n", message.status, len(message.message))
+		res += fmt.Sprintf("%v\n", message)
 	}
 
 	return res
@@ -334,8 +358,8 @@ func (proxy ProxyModel) Run() {
 				log.Fatalf("Failed to dial: %v", err)
 			}
 
-			go forward(inConn, outConn, proxy.createTransmittionHandler("in->out"))
-			go forward(outConn, inConn, proxy.createTransmittionHandler("out->in"))
+			go forward(inConn, outConn, proxy.createTransmittionHandler(TRANSMITTION_DIRECTION_TO_SERVER))
+			go forward(outConn, inConn, proxy.createTransmittionHandler(TRANSMITTION_DIRECTION_TO_CLIENT))
 		}(conn)
 	}
 }
