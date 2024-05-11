@@ -353,8 +353,8 @@ func (p ProxyModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 func (p ProxyModel) View() string {
 	var res string
-	for _, message := range p.messages {
-		res += fmt.Sprintf("%v\n", message)
+	for i, message := range p.messages {
+		res += fmt.Sprintf("%d. %v\n", i + 1, message)
 	}
 
 	return res
