@@ -15,6 +15,10 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/charmbracelet/bubbles/key"
+	tea "github.com/charmbracelet/bubbletea"
+	boxer "github.com/treilik/bubbleboxer"
 )
 
 type Args struct {
@@ -236,34 +240,78 @@ func executeAction(action byte, buffer []byte) []byte {
 	}
 }
 
-func createTransmittionHandle(transmittionDirection string) func(buffer []byte) []byte {
+func (proxy *ProxyModel) createTransmittionHandler(transmittionDirection string) func(buffer []byte) []byte {
 	return func(buffer []byte) []byte {
-		firstRun := true
-		for {
-			if !firstRun {
-				fmt.Println("You may interact with the same packet again.")
-			} else {
-				fmt.Printf("%s: received %d bytes. ", transmittionDirection, len(buffer))
-				firstRun = false
-			}
-
-			if !askYesNo("View?", QUESTION_DEFAULT_YES) {
-				return buffer
-			}
-
-			action := inputAction()
-			buffer = executeAction(action, buffer)
-
-			if buffer == nil {
-				return nil
-			}
-		}
+		proxy.messages = append(proxy.messages, TCPMessage{
+			message: buffer,
+			status:  "Pending",
+			time:    time.Now(),
+		})
+		return buffer
 	}
 }
 
+func Must[T any](t T, err error) T {
+	if err != nil {
+		panic(err)
+	}
 
-func runProxy(args Args) {
-	l, err := net.Listen("tcp", fmt.Sprintf(":%d", args.inPort))
+	return t
+}
+
+type KeyMap struct {
+	Quit,
+	Up,
+	Down key.Binding
+}
+
+type Model struct {
+	tui    *boxer.Boxer
+	keyMap *KeyMap
+}
+
+type Status string
+
+type TCPMessage struct {
+	message []byte
+	status  Status
+	time    time.Time
+}
+
+type Proxy struct {
+	args     Args
+	messages []TCPMessage
+}
+
+type ProxyModel struct {
+	*Proxy
+}
+
+type TickMsg time.Time
+
+func Tick() tea.Msg {
+	return TickMsg(time.Now())
+}
+
+func (p ProxyModel) Init() tea.Cmd {
+	return func() tea.Msg {
+		go p.Run()
+		return Tick()
+	}
+}
+func (p ProxyModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	return p, Tick
+}
+func (p ProxyModel) View() string {
+	var res string
+	for _, message := range p.messages {
+		res += fmt.Sprintf("%s: %d bytes\n", message.status, len(message.message))
+	}
+
+	return res
+}
+func (proxy ProxyModel) Run() {
+	l, err := net.Listen("tcp", fmt.Sprintf(":%d", proxy.args.inPort))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -281,17 +329,107 @@ func runProxy(args Args) {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
 
-			outConn, err := dialer.DialContext(ctx, "tcp", fmt.Sprintf("%s:%d", args.outIP, args.outPort))
+			outConn, err := dialer.DialContext(ctx, "tcp", fmt.Sprintf("%s:%d", proxy.args.outIP, proxy.args.outPort))
 			if err != nil {
 				log.Fatalf("Failed to dial: %v", err)
 			}
 
-			go forward(inConn, outConn, createTransmittionHandle("in->out"))
-			go forward(outConn, inConn, createTransmittionHandle("out->in"))
+			go forward(inConn, outConn, proxy.createTransmittionHandler("in->out"))
+			go forward(outConn, inConn, proxy.createTransmittionHandler("out->in"))
 		}(conn)
 	}
 }
 
+type Console struct {
+	*strings.Builder
+	name string
+}
+
+func (Console) Init() tea.Cmd                         { return nil }
+func (c Console) Update(tea.Msg) (tea.Model, tea.Cmd) { return c, nil }
+func (c Console) View() string                        { return c.name + "\n\n" + c.String() }
+
+func MakeModel(proxy ProxyModel, debugConsole Console) Model {
+	m := Model{
+		tui: &boxer.Boxer{},
+		keyMap: &KeyMap{
+			Quit: key.NewBinding(
+				key.WithKeys("q", "ctrl+c"),
+				key.WithHelp("q", "quit"),
+			),
+			Up: key.NewBinding(
+				key.WithKeys("k", "up"),
+				key.WithHelp("↑/k", "move up"),
+			),
+			Down: key.NewBinding(
+				key.WithKeys("j", "down"),
+				key.WithHelp("↓/j", "move down"),
+			),
+		},
+	}
+
+	m.tui.LayoutTree = boxer.Node{
+		VerticalStacked: true,
+		Children: []boxer.Node{
+			Must(m.tui.CreateLeaf("main", proxy)),
+			Must(m.tui.CreateLeaf("debug", debugConsole)),
+		},
+	}
+
+	return m
+}
+
+func (m Model) Init() tea.Cmd {
+	return m.tui.ModelMap["main"].Init()
+}
+
+func (m Model) UpdateNode(msg tea.Msg, address string) tea.Cmd {
+	nodeModel, cmd := m.tui.ModelMap[address].Update(msg)
+	m.tui.ModelMap[address] = nodeModel
+	return cmd
+}
+
+func (m Model) UpdateMultipleNodes(msg tea.Msg, addresses ...string) tea.Cmd {
+	var cmds []tea.Cmd
+	for _, address := range addresses {
+		cmds = append(cmds, m.UpdateNode(msg, address))
+	}
+
+	return tea.Batch(cmds...)
+}
+
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch {
+		case key.Matches(msg, m.keyMap.Quit):
+			return m, tea.Quit
+		}
+	case tea.WindowSizeMsg:
+		m.tui.UpdateSize(msg)
+	case TickMsg:
+		return m, m.UpdateNode(msg, "main")
+	}
+	return m, nil
+}
+
+func (m Model) View() string {
+	return m.tui.View()
+}
+
 func main() {
-	runProxy(getArgs())
+	proxy := ProxyModel{
+		&Proxy{args: getArgs()},
+	}
+	debugConsole := Console{
+		Builder: new(strings.Builder),
+		name:    "Debug Console",
+	}
+	log.SetOutput(debugConsole)
+
+	program := tea.NewProgram(MakeModel(proxy, debugConsole))
+	if _, err := program.Run(); err != nil {
+		log.Printf("There's been an error: %v", err)
+		os.Exit(1)
+	}
 }
