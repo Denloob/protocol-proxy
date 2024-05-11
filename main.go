@@ -16,10 +16,13 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/Denloob/protocol-proxy/symbols"
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	boxer "github.com/treilik/bubbleboxer"
 )
+
+var symbolMap = symbols.NerdFontMap
 
 type Args struct {
 	inPort  int
@@ -248,14 +251,14 @@ const (
 )
 
 func (direction TransmittionDirection) String() string {
-    switch direction {
-    case TRANSMITTION_DIRECTION_TO_SERVER:
-        return "→"
-    case TRANSMITTION_DIRECTION_TO_CLIENT:
-        return "←"
-    default:
-        panic("Invalid direction")
-    }
+	switch direction {
+	case TRANSMITTION_DIRECTION_TO_SERVER:
+		return symbolMap[symbols.ScArrowLeft]
+	case TRANSMITTION_DIRECTION_TO_CLIENT:
+		return symbolMap[symbols.ScArrowRight]
+	default:
+		panic("Invalid direction")
+	}
 }
 
 func (proxy *ProxyModel) createTransmittionHandler(transmittionDirection TransmittionDirection) func(buffer []byte) []byte {
@@ -299,7 +302,7 @@ type TCPMessage struct {
 }
 
 func (message TCPMessage) String() string {
-    return fmt.Sprintf("[%v] %v %v (%v bytes)", message.time.Format(time.TimeOnly), message.direction, message.status, len(message.message))
+	return fmt.Sprintf("[%v] %v %v (%v bytes)", message.time.Format(time.TimeOnly), message.direction, message.status, len(message.message))
 }
 
 type Proxy struct {
@@ -383,11 +386,11 @@ func MakeModel(proxy ProxyModel, debugConsole Console) Model {
 			),
 			Up: key.NewBinding(
 				key.WithKeys("k", "up"),
-				key.WithHelp("↑/k", "move up"),
+				key.WithHelp(symbolMap[symbols.ScArrowUp]+"/k", "move up"),
 			),
 			Down: key.NewBinding(
 				key.WithKeys("j", "down"),
-				key.WithHelp("↓/j", "move down"),
+				key.WithHelp(symbolMap[symbols.ScArrowDown]+"/j", "move down"),
 			),
 		},
 	}
