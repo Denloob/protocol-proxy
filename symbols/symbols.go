@@ -10,6 +10,11 @@ const (
 
 	ScSpace
 	ScEnter
+
+	ScTrashCan
+	ScClock
+	ScPen
+	ScSentMail
 )
 
 type SymbolMap map[SymbolCode]string
@@ -22,6 +27,11 @@ var NerdFontMap = SymbolMap{
 
 	ScSpace: "󱁐 ",
 	ScEnter: "↵",
+
+	ScTrashCan: " ",
+	ScClock:    " ",
+	ScPen:      " ",
+	ScSentMail: "󰪱 ",
 }
 
 var DefaultMap = SymbolMap{
@@ -32,4 +42,9 @@ var DefaultMap = SymbolMap{
 
 	ScSpace: "␣",
 	ScEnter: "↵",
+
+	ScTrashCan: "🗑",
+	ScClock:    "⏱️",
+	ScPen:      "🖋️",
+	ScSentMail: "📨",
 }

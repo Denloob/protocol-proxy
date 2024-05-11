@@ -261,11 +261,35 @@ func (direction TransmittionDirection) String() string {
 	}
 }
 
+type Status int
+
+const (
+	STATUS_PENDING Status = iota
+	STATUS_TRANSFERED_WITHOUT_MODIFICATIONS
+	STATUS_DROPPED
+	STATUS_EDITED
+)
+
+func (status Status) String() string {
+	switch status {
+	case STATUS_PENDING:
+		return symbolMap[symbols.ScClock]
+	case STATUS_TRANSFERED_WITHOUT_MODIFICATIONS:
+		return symbolMap[symbols.ScSentMail]
+	case STATUS_DROPPED:
+		return symbolMap[symbols.ScTrashCan]
+	case STATUS_EDITED:
+		return symbolMap[symbols.ScPen]
+	default:
+		panic("Invalid status")
+	}
+}
+
 func (proxy *ProxyModel) createTransmittionHandler(transmittionDirection TransmittionDirection) func(buffer []byte) []byte {
 	return func(buffer []byte) []byte {
 		proxy.messages = append(proxy.messages, TCPMessage{
 			message:   buffer,
-			status:    "Pending",
+			status:    STATUS_PENDING,
 			time:      time.Now(),
 			direction: transmittionDirection,
 		})
@@ -292,8 +316,6 @@ type Model struct {
 	keyMap *KeyMap
 }
 
-type Status string
-
 type TCPMessage struct {
 	message   []byte
 	status    Status
@@ -302,7 +324,7 @@ type TCPMessage struct {
 }
 
 func (message TCPMessage) String() string {
-	return fmt.Sprintf("[%v] %v %v (%v bytes)", message.time.Format(time.TimeOnly), message.direction, message.status, len(message.message))
+	return fmt.Sprintf("[%v] %v %v (%v bytes)", message.time.Format(time.TimeOnly), message.status, message.direction, len(message.message))
 }
 
 type Proxy struct {
