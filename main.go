@@ -16,7 +16,9 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/Denloob/protocol-proxy/styles"
 	"github.com/Denloob/protocol-proxy/symbols"
+
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	boxer "github.com/treilik/bubbleboxer"
@@ -312,8 +314,7 @@ type KeyMap struct {
 }
 
 type Model struct {
-	tui    *boxer.Boxer
-	keyMap *KeyMap
+	tui *boxer.Boxer
 }
 
 type TCPMessage struct {
@@ -334,6 +335,7 @@ type Proxy struct {
 
 type ProxyModel struct {
 	*Proxy
+	selectedMessageIndex int
 }
 
 type TickMsg time.Time
@@ -349,12 +351,34 @@ func (p ProxyModel) Init() tea.Cmd {
 	}
 }
 func (p ProxyModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	return p, Tick
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch {
+		case key.Matches(msg, keyMap.Up):
+			if p.selectedMessageIndex > 0 {
+				p.selectedMessageIndex--
+			}
+		case key.Matches(msg, keyMap.Down):
+			if p.selectedMessageIndex < len(p.messages)-1 {
+				p.selectedMessageIndex++
+			}
+		}
+	case TickMsg:
+		return p, Tick
+	}
+
+	return p, nil
 }
 func (p ProxyModel) View() string {
 	var res string
 	for i, message := range p.messages {
-		res += fmt.Sprintf("%d. %v\n", i + 1, message)
+		line := fmt.Sprintf("%d. %v", i+1, message)
+
+		if i == p.selectedMessageIndex {
+			line = styles.Selected.Render(line)
+		}
+
+		res += line + "\n"
 	}
 
 	return res
@@ -394,6 +418,21 @@ type Console struct {
 	name string
 }
 
+var keyMap = KeyMap{
+	Quit: key.NewBinding(
+		key.WithKeys("q", "ctrl+c"),
+		key.WithHelp("q", "quit"),
+	),
+	Up: key.NewBinding(
+		key.WithKeys("k", "up"),
+		key.WithHelp(symbolMap[symbols.ScArrowUp]+"/k", "move up"),
+	),
+	Down: key.NewBinding(
+		key.WithKeys("j", "down"),
+		key.WithHelp(symbolMap[symbols.ScArrowDown]+"/j", "move down"),
+	),
+}
+
 func (Console) Init() tea.Cmd                         { return nil }
 func (c Console) Update(tea.Msg) (tea.Model, tea.Cmd) { return c, nil }
 func (c Console) View() string                        { return c.name + "\n\n" + c.String() }
@@ -401,20 +440,6 @@ func (c Console) View() string                        { return c.name + "\n\n" +
 func MakeModel(proxy ProxyModel, debugConsole Console) Model {
 	m := Model{
 		tui: &boxer.Boxer{},
-		keyMap: &KeyMap{
-			Quit: key.NewBinding(
-				key.WithKeys("q", "ctrl+c"),
-				key.WithHelp("q", "quit"),
-			),
-			Up: key.NewBinding(
-				key.WithKeys("k", "up"),
-				key.WithHelp(symbolMap[symbols.ScArrowUp]+"/k", "move up"),
-			),
-			Down: key.NewBinding(
-				key.WithKeys("j", "down"),
-				key.WithHelp(symbolMap[symbols.ScArrowDown]+"/j", "move down"),
-			),
-		},
 	}
 
 	m.tui.LayoutTree = boxer.Node{
@@ -451,8 +476,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch {
-		case key.Matches(msg, m.keyMap.Quit):
+		case key.Matches(msg, keyMap.Quit):
 			return m, tea.Quit
+		case key.Matches(msg, keyMap.Up), key.Matches(msg, keyMap.Down):
+			return m, m.UpdateNode(msg, "main")
 		}
 	case tea.WindowSizeMsg:
 		m.tui.UpdateSize(msg)
@@ -469,6 +496,7 @@ func (m Model) View() string {
 func main() {
 	proxy := ProxyModel{
 		&Proxy{args: getArgs()},
+		0,
 	}
 	debugConsole := Console{
 		Builder: new(strings.Builder),
