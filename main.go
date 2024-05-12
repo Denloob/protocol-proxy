@@ -56,15 +56,18 @@ func forward(source io.Reader, dest io.Writer, handleTransmittion func([]byte) [
 			log.Fatalf("Read failed: %v", err)
 		}
 
-		newBuffer := handleTransmittion(buffer[:size])
-		if newBuffer == nil { // Packet dropped, skip
-			continue
-		}
+		go func() {
+			newBuffer := handleTransmittion(buffer[:size])
+			if newBuffer == nil { // Packet dropped, skip
+				return
+			}
 
-		_, err = dest.Write(newBuffer)
-		if err != nil {
-			log.Fatalf("Write failed: %v", err)
-		}
+			_, err := dest.Write(newBuffer)
+
+			if err != nil {
+				log.Printf("Write failed: %v", err)
+			}
+		}()
 	}
 }
 
@@ -268,6 +271,7 @@ type Status int
 const (
 	STATUS_PENDING Status = iota
 	STATUS_TRANSFERED_WITHOUT_MODIFICATIONS
+	STATUS_TRANSFERED_WITH_MODIFICATIONS
 	STATUS_DROPPED
 	STATUS_EDITED
 )
@@ -282,19 +286,32 @@ func (status Status) String() string {
 		return symbolMap[symbols.ScTrashCan]
 	case STATUS_EDITED:
 		return symbolMap[symbols.ScPen]
+	case STATUS_TRANSFERED_WITH_MODIFICATIONS:
+		return symbolMap[symbols.ScPen] + symbolMap[symbols.ScSentMail]
 	default:
 		panic("Invalid status")
 	}
 }
 
+func NewTCPMessage(transmittionDirection TransmittionDirection, content []byte) *TCPMessage {
+	return &TCPMessage{
+		content:   content,
+		status:    STATUS_PENDING,
+		time:      time.Now(),
+		direction: transmittionDirection,
+
+		transmitChan: make(chan bool),
+	}
+}
+
 func (proxy *ProxyModel) createTransmittionHandler(transmittionDirection TransmittionDirection) func(buffer []byte) []byte {
 	return func(buffer []byte) []byte {
-		proxy.messages = append(proxy.messages, TCPMessage{
-			content:   buffer,
-			status:    STATUS_PENDING,
-			time:      time.Now(),
-			direction: transmittionDirection,
-		})
+		message := NewTCPMessage(transmittionDirection, buffer)
+
+		proxy.messages = append(proxy.messages, message)
+
+		<-message.transmitChan
+
 		return message.content
 	}
 }
@@ -309,6 +326,7 @@ func Must[T any](t T, err error) T {
 
 type KeyMap struct {
 	Quit,
+	Transmit,
 	Up,
 	Down key.Binding
 }
@@ -322,6 +340,46 @@ type TCPMessage struct {
 	status    Status
 	time      time.Time
 	direction TransmittionDirection
+
+	transmitChan chan bool
+}
+
+func (message *TCPMessage) Transmit() error {
+	switch message.status {
+	case STATUS_EDITED:
+		message.status = STATUS_TRANSFERED_WITH_MODIFICATIONS
+	case STATUS_PENDING:
+		message.status = STATUS_TRANSFERED_WITHOUT_MODIFICATIONS
+
+	case STATUS_TRANSFERED_WITHOUT_MODIFICATIONS, STATUS_TRANSFERED_WITH_MODIFICATIONS:
+		return fmt.Errorf("The message was already transmitted. Can't retransmit.")
+	case STATUS_DROPPED:
+		return fmt.Errorf("The message was dropped. Can't transmit.")
+	default:
+		return fmt.Errorf("The message cannot be transmitted.")
+	}
+
+	message.transmitChan <- true
+
+	return nil
+}
+
+func (message TCPMessage) SetContent(newContent []byte) error {
+	switch message.status {
+	case STATUS_PENDING, STATUS_EDITED:
+		// Allow
+	default:
+		return fmt.Errorf("The message can no longer be edited.")
+	}
+
+	message.content = newContent
+	message.status = STATUS_EDITED
+
+	return nil
+}
+
+func (message TCPMessage) Content() []byte {
+	return message.content
 }
 
 func (message TCPMessage) String() string {
@@ -330,7 +388,7 @@ func (message TCPMessage) String() string {
 
 type Proxy struct {
 	args     Args
-	messages []TCPMessage
+	messages []*TCPMessage
 }
 
 type ProxyModel struct {
@@ -350,24 +408,25 @@ func (p ProxyModel) Init() tea.Cmd {
 		return Tick()
 	}
 }
-func (p ProxyModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (proxy ProxyModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch {
-		case key.Matches(msg, keyMap.Up):
-			if p.selectedMessageIndex > 0 {
-				p.selectedMessageIndex--
-			}
-		case key.Matches(msg, keyMap.Down):
-			if p.selectedMessageIndex < len(p.messages)-1 {
-				p.selectedMessageIndex++
+		case key.Matches(msg, keyMap.Up) && proxy.selectedMessageIndex > 0:
+			proxy.selectedMessageIndex--
+		case key.Matches(msg, keyMap.Down) && proxy.selectedMessageIndex < len(proxy.messages)-1:
+			proxy.selectedMessageIndex++
+		case key.Matches(msg, keyMap.Transmit) && len(proxy.messages) > 0:
+			err := proxy.messages[proxy.selectedMessageIndex].Transmit()
+			if err != nil {
+				log.Println(err)
 			}
 		}
 	case TickMsg:
-		return p, Tick
+		return proxy, Tick
 	}
 
-	return p, nil
+	return proxy, nil
 }
 func (p ProxyModel) View() string {
 	var res string
@@ -431,6 +490,10 @@ var keyMap = KeyMap{
 		key.WithKeys("j", "down"),
 		key.WithHelp(symbolMap[symbols.ScArrowDown]+"/j", "move down"),
 	),
+	Transmit: key.NewBinding(
+		key.WithKeys("space", "enter"),
+		key.WithHelp(symbolMap[symbols.ScSpace]+"/"+symbolMap[symbols.ScEnter], "transmit"),
+	),
 }
 
 func (Console) Init() tea.Cmd                         { return nil }
@@ -478,7 +541,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case key.Matches(msg, keyMap.Quit):
 			return m, tea.Quit
-		case key.Matches(msg, keyMap.Up), key.Matches(msg, keyMap.Down):
+		case key.Matches(msg, keyMap.Up),
+			key.Matches(msg, keyMap.Down),
+			key.Matches(msg, keyMap.Transmit):
+
 			return m, m.UpdateNode(msg, "main")
 		}
 	case tea.WindowSizeMsg:
