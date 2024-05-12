@@ -270,24 +270,18 @@ type Status int
 
 const (
 	STATUS_PENDING Status = iota
-	STATUS_TRANSFERED_WITHOUT_MODIFICATIONS
-	STATUS_TRANSFERED_WITH_MODIFICATIONS
+	STATUS_TRANSMITED
 	STATUS_DROPPED
-	STATUS_EDITED
 )
 
 func (status Status) String() string {
 	switch status {
 	case STATUS_PENDING:
 		return symbolMap[symbols.ScClock]
-	case STATUS_TRANSFERED_WITHOUT_MODIFICATIONS:
+	case STATUS_TRANSMITED:
 		return symbolMap[symbols.ScSentMail]
 	case STATUS_DROPPED:
 		return symbolMap[symbols.ScTrashCan]
-	case STATUS_EDITED:
-		return symbolMap[symbols.ScPen]
-	case STATUS_TRANSFERED_WITH_MODIFICATIONS:
-		return symbolMap[symbols.ScPen] + symbolMap[symbols.ScSentMail]
 	default:
 		panic("Invalid status")
 	}
@@ -296,6 +290,7 @@ func (status Status) String() string {
 func NewTCPMessage(transmittionDirection TransmittionDirection, content []byte) *TCPMessage {
 	return &TCPMessage{
 		content:   content,
+		edited:    false,
 		status:    STATUS_PENDING,
 		time:      time.Now(),
 		direction: transmittionDirection,
@@ -337,6 +332,7 @@ type Model struct {
 
 type TCPMessage struct {
 	content   []byte
+	edited    bool
 	status    Status
 	time      time.Time
 	direction TransmittionDirection
@@ -346,12 +342,10 @@ type TCPMessage struct {
 
 func (message *TCPMessage) Transmit() error {
 	switch message.status {
-	case STATUS_EDITED:
-		message.status = STATUS_TRANSFERED_WITH_MODIFICATIONS
 	case STATUS_PENDING:
-		message.status = STATUS_TRANSFERED_WITHOUT_MODIFICATIONS
+		message.status = STATUS_TRANSMITED
 
-	case STATUS_TRANSFERED_WITHOUT_MODIFICATIONS, STATUS_TRANSFERED_WITH_MODIFICATIONS:
+	case STATUS_TRANSMITED:
 		return fmt.Errorf("The message was already transmitted. Can't retransmit.")
 	case STATUS_DROPPED:
 		return fmt.Errorf("The message was dropped. Can't transmit.")
@@ -365,15 +359,12 @@ func (message *TCPMessage) Transmit() error {
 }
 
 func (message TCPMessage) SetContent(newContent []byte) error {
-	switch message.status {
-	case STATUS_PENDING, STATUS_EDITED:
-		// Allow
-	default:
+	if message.status != STATUS_PENDING {
 		return fmt.Errorf("The message can no longer be edited.")
 	}
 
 	message.content = newContent
-	message.status = STATUS_EDITED
+	message.edited = true
 
 	return nil
 }
@@ -383,7 +374,12 @@ func (message TCPMessage) Content() []byte {
 }
 
 func (message TCPMessage) String() string {
-	return fmt.Sprintf("[%v] %v %v (%v bytes)", message.time.Format(time.TimeOnly), message.status, message.direction, len(message.content))
+	messageState := message.status.String()
+	if message.edited {
+		messageState += " " + symbolMap[symbols.ScPen]
+	}
+
+	return fmt.Sprintf("[%v] %v %v (%v bytes)", message.time.Format(time.TimeOnly), messageState, message.direction, len(message.content))
 }
 
 type Proxy struct {
