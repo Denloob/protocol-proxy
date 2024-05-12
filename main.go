@@ -290,12 +290,12 @@ func (status Status) String() string {
 func (proxy *ProxyModel) createTransmittionHandler(transmittionDirection TransmittionDirection) func(buffer []byte) []byte {
 	return func(buffer []byte) []byte {
 		proxy.messages = append(proxy.messages, TCPMessage{
-			message:   buffer,
+			content:   buffer,
 			status:    STATUS_PENDING,
 			time:      time.Now(),
 			direction: transmittionDirection,
 		})
-		return buffer
+		return message.content
 	}
 }
 
@@ -318,14 +318,14 @@ type Model struct {
 }
 
 type TCPMessage struct {
-	message   []byte
+	content   []byte
 	status    Status
 	time      time.Time
 	direction TransmittionDirection
 }
 
 func (message TCPMessage) String() string {
-	return fmt.Sprintf("[%v] %v %v (%v bytes)", message.time.Format(time.TimeOnly), message.status, message.direction, len(message.message))
+	return fmt.Sprintf("[%v] %v %v (%v bytes)", message.time.Format(time.TimeOnly), message.status, message.direction, len(message.content))
 }
 
 type Proxy struct {
