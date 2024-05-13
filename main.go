@@ -319,13 +319,6 @@ func Must[T any](t T, err error) T {
 	return t
 }
 
-type KeyMap struct {
-	Quit,
-	Transmit,
-	Up,
-	Down key.Binding
-}
-
 type Model struct {
 	tui *boxer.Boxer
 }
@@ -383,8 +376,9 @@ func (message TCPMessage) String() string {
 }
 
 type Proxy struct {
-	args     Args
-	messages []*TCPMessage
+	args            Args
+	messages        []*TCPMessage
+	vieweingMessage bool
 }
 
 type ProxyModel struct {
@@ -402,55 +396,61 @@ func MakeProxyModel(proxy *Proxy) ProxyModel {
 	return ProxyModel{Proxy: proxy, selectedMessageIndex: -1}
 }
 
+func (p *ProxyModel) tick() tea.Cmd {
+	if len(p.messages) > 0 && p.selectedMessageIndex == -1 {
+		p.selectedMessageIndex = 0
+
+		return CreateViewMsgCmd(p.messages[p.selectedMessageIndex])
+	}
+
+	return nil
+}
+
 func (p ProxyModel) Init() tea.Cmd {
 	return func() tea.Msg {
 		go p.Run()
 		return Tick()
 	}
 }
-func (proxy ProxyModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (p ProxyModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds tea.BatchMsg
-	selectedMessageChanged := false
-
-	if len(proxy.messages) > 0 && proxy.selectedMessageIndex == -1 {
-		proxy.selectedMessageIndex = 0
-		selectedMessageChanged = true
-	}
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		switch {
-		case key.Matches(msg, keyMap.Up) && proxy.selectedMessageIndex > 0:
-			proxy.selectedMessageIndex--
-			selectedMessageChanged = true
-		case key.Matches(msg, keyMap.Down) && proxy.selectedMessageIndex < len(proxy.messages)-1:
-			proxy.selectedMessageIndex++
-			selectedMessageChanged = true
-		case key.Matches(msg, keyMap.Transmit) && len(proxy.messages) > 0:
-			err := proxy.messages[proxy.selectedMessageIndex].Transmit()
-			if err != nil {
-				log.Println(err)
-			}
-		}
+		newProxy, cmd := keyMap.Handle(p, msg)
+		p = newProxy.(ProxyModel)
+		cmds = append(cmds, cmd)
 	case TickMsg:
 		cmds = append(cmds, Tick)
+		cmds = append(cmds, p.tick())
+	case editBufferInEditorMsg:
+		if msg.err != nil {
+			log.Printf("error during message editing: %v\n", msg.err)
+		} else {
+			p.messages[p.selectedMessageIndex].content = msg.newBuffer
+		}
 	}
 
-	if selectedMessageChanged {
-		cmds = append(cmds, CreateViewMsgCmd(proxy.messages[proxy.selectedMessageIndex]))
-	}
-
-	return proxy, tea.Batch(cmds...)
+	return p, tea.Batch(cmds...)
 }
 func (p ProxyModel) View() string {
 	var res string
 	for i, message := range p.messages {
 		line := fmt.Sprintf("%d. %v", i+1, message)
 
-		if i == p.selectedMessageIndex {
-			line = styles.Selected.Render(line)
+		style := styles.Unstyled
+
+		if p.vieweingMessage {
+			if i == p.selectedMessageIndex {
+				style = styles.UnfocusedSelected
+			} else {
+				style = styles.Unfocused
+			}
+		} else if i == p.selectedMessageIndex {
+			style = styles.Selected
 		}
 
+		line = style.Render(line)
 		res += line + "\n"
 	}
 
@@ -491,7 +491,18 @@ type Console struct {
 	name string
 }
 
-var keyMap = KeyMap{
+type KeyMap interface {
+	Handle(model tea.Model, keyMsg tea.KeyMsg) (tea.Model, tea.Cmd)
+}
+
+type MainKeyMap struct {
+	Quit,
+	View,
+	Up,
+	Down key.Binding
+}
+
+var mainKeymap = &MainKeyMap{
 	Quit: key.NewBinding(
 		key.WithKeys("q", "ctrl+c"),
 		key.WithHelp("q", "quit"),
@@ -504,14 +515,115 @@ var keyMap = KeyMap{
 		key.WithKeys("j", "down"),
 		key.WithHelp(symbolMap[symbols.ScArrowDown]+"/j", "move down"),
 	),
-	Transmit: key.NewBinding(
+	View: key.NewBinding(
 		key.WithKeys("space", "enter"),
 		key.WithHelp(symbolMap[symbols.ScSpace]+"/"+symbolMap[symbols.ScEnter], "transmit"),
 	),
 }
 
+func (k *MainKeyMap) Handle(model tea.Model, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	proxy := model.(ProxyModel)
+	selectedMessageChanged := false
+
+	switch {
+	case key.Matches(msg, k.Quit):
+		return proxy, tea.Quit
+	case key.Matches(msg, k.Up) && proxy.selectedMessageIndex > 0:
+		proxy.selectedMessageIndex--
+		selectedMessageChanged = true
+	case key.Matches(msg, k.Down) && proxy.selectedMessageIndex < len(proxy.messages)-1:
+		proxy.selectedMessageIndex++
+		selectedMessageChanged = true
+	case key.Matches(msg, k.View) && len(proxy.messages) > 0:
+		proxy.vieweingMessage = true
+		keyMap = messageViewKeymap
+	}
+
+	if selectedMessageChanged {
+		return proxy, CreateViewMsgCmd(proxy.messages[proxy.selectedMessageIndex])
+	}
+
+	return proxy, nil
+}
+
+type editBufferInEditorMsg struct {
+	newBuffer []byte
+	err       error
+}
+
+func editBufferInEditor(buffer []byte) (tea.Cmd, error) {
+	tempfile, err := os.CreateTemp("", "hexdump*.bin")
+	if err != nil {
+		return nil, err
+	}
+
+	filename := tempfile.Name()
+
+	tempfile.Write(buffer)
+	tempfile.Close()
+
+	editor := os.Getenv("EDITOR")
+
+	cmd := exec.Command(editor, filename)
+
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		defer os.Remove(tempfile.Name())
+
+		newBuffer, err := os.ReadFile(filename)
+		return editBufferInEditorMsg{newBuffer, err}
+	}), nil
+}
+
+type ViewMessageKeyMap struct {
+	Quit,
+	ExitView,
+	Edit key.Binding
+}
+
+var messageViewKeymap = &ViewMessageKeyMap{
+	Quit: key.NewBinding(
+		key.WithKeys("Q", "ctrl+c"),
+		key.WithHelp("Q", "quit"),
+	),
+	ExitView: key.NewBinding(
+		key.WithKeys("q", "esc"),
+		key.WithHelp("q/esc", "exit view"),
+	),
+	Edit: key.NewBinding(
+		key.WithKeys("e"),
+		key.WithHelp("e", "edit"),
+	),
+}
+
+func (k ViewMessageKeyMap) Handle(model tea.Model, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	proxy := model.(ProxyModel)
+
+	switch {
+	case key.Matches(msg, k.Quit):
+		return proxy, tea.Quit
+	case key.Matches(msg, k.ExitView):
+		proxy.vieweingMessage = false
+		keyMap = mainKeymap
+	case key.Matches(msg, k.Edit):
+		messageContent := proxy.messages[proxy.selectedMessageIndex].content
+		cmd, err := editBufferInEditor(messageContent)
+		if err != nil {
+			log.Printf("Edit in editor error: %s\n", err)
+			return proxy, nil
+		}
+
+		return proxy, cmd
+	}
+
+	return proxy, nil
+}
+
+var keyMap KeyMap = mainKeymap
+
 type MessageViewModel struct {
 	viewedMessage *TCPMessage
+
+	proxy *ProxyModel
 }
 
 type ViewMessageMsg struct {
@@ -532,7 +644,7 @@ func (m *MessageViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ViewMessageMsg:
 		m.viewedMessage = msg.message
 	}
-	
+
 	return m, nil
 }
 func (m *MessageViewModel) View() string {
@@ -540,16 +652,20 @@ func (m *MessageViewModel) View() string {
 		return "No message to view"
 	}
 
-	return hex.Dump(m.viewedMessage.Content())
-}
+	hexdump := hex.Dump(m.viewedMessage.Content())
 
-var messageView = &MessageViewModel{}
+	if m.proxy.vieweingMessage {
+		hexdump = styles.Selected.Render(hexdump)
+	}
+
+	return hexdump
+}
 
 func (Console) Init() tea.Cmd                         { return nil }
 func (c Console) Update(tea.Msg) (tea.Model, tea.Cmd) { return c, nil }
 func (c Console) View() string                        { return c.name + "\n\n" + c.String() }
 
-func MakeModel(proxy ProxyModel, debugConsole Console) Model {
+func MakeModel(proxy ProxyModel, debugConsole Console, messageView *MessageViewModel) Model {
 	m := Model{
 		tui: &boxer.Boxer{},
 	}
@@ -588,20 +704,12 @@ func (m Model) UpdateMultipleNodes(msg tea.Msg, addresses ...string) tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		switch {
-		case key.Matches(msg, keyMap.Quit):
-			return m, tea.Quit
-		case key.Matches(msg, keyMap.Up),
-			key.Matches(msg, keyMap.Down),
-			key.Matches(msg, keyMap.Transmit):
-
-			return m, m.UpdateNode(msg, "main")
-		}
+		return m, m.UpdateNode(msg, "main")
 	case ViewMessageMsg:
 		return m, m.UpdateNode(msg, "messageView")
 	case tea.WindowSizeMsg:
 		m.tui.UpdateSize(msg)
-	case TickMsg:
+	case TickMsg, editBufferInEditorMsg:
 		return m, m.UpdateNode(msg, "main")
 	}
 	return m, nil
@@ -619,7 +727,7 @@ func main() {
 	}
 	log.SetOutput(debugConsole)
 
-	program := tea.NewProgram(MakeModel(proxy, debugConsole), tea.WithAltScreen())
+	program := tea.NewProgram(MakeModel(proxy, debugConsole, &MessageViewModel{nil, &proxy}), tea.WithAltScreen())
 	if _, err := program.Run(); err != nil {
 		log.Printf("There's been an error: %v", err)
 		os.Exit(1)
