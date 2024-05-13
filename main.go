@@ -49,8 +49,8 @@ func getArgs() Args {
 }
 
 func forward(source io.Reader, dest io.Writer, handleTransmittion func([]byte) []byte) {
-	buffer := make([]byte, 1<<16)
 	for {
+		buffer := make([]byte, 1<<16)
 		size, err := source.Read(buffer)
 		if err != nil {
 			log.Fatalf("Read failed: %v", err)
