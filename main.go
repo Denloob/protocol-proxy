@@ -619,7 +619,7 @@ func main() {
 	}
 	log.SetOutput(debugConsole)
 
-	program := tea.NewProgram(MakeModel(proxy, debugConsole))
+	program := tea.NewProgram(MakeModel(proxy, debugConsole), tea.WithAltScreen())
 	if _, err := program.Run(); err != nil {
 		log.Printf("There's been an error: %v", err)
 		os.Exit(1)
