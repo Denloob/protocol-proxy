@@ -398,6 +398,10 @@ func Tick() tea.Msg {
 	return TickMsg(time.Now())
 }
 
+func MakeProxyModel(proxy *Proxy) ProxyModel {
+	return ProxyModel{Proxy: proxy, selectedMessageIndex: -1}
+}
+
 func (p ProxyModel) Init() tea.Cmd {
 	return func() tea.Msg {
 		go p.Run()
@@ -405,13 +409,23 @@ func (p ProxyModel) Init() tea.Cmd {
 	}
 }
 func (proxy ProxyModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmds tea.BatchMsg
+	selectedMessageChanged := false
+
+	if len(proxy.messages) > 0 && proxy.selectedMessageIndex == -1 {
+		proxy.selectedMessageIndex = 0
+		selectedMessageChanged = true
+	}
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch {
 		case key.Matches(msg, keyMap.Up) && proxy.selectedMessageIndex > 0:
 			proxy.selectedMessageIndex--
+			selectedMessageChanged = true
 		case key.Matches(msg, keyMap.Down) && proxy.selectedMessageIndex < len(proxy.messages)-1:
 			proxy.selectedMessageIndex++
+			selectedMessageChanged = true
 		case key.Matches(msg, keyMap.Transmit) && len(proxy.messages) > 0:
 			err := proxy.messages[proxy.selectedMessageIndex].Transmit()
 			if err != nil {
@@ -419,10 +433,14 @@ func (proxy ProxyModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case TickMsg:
-		return proxy, Tick
+		cmds = append(cmds, Tick)
 	}
 
-	return proxy, nil
+	if selectedMessageChanged {
+		cmds = append(cmds, CreateViewMsgCmd(proxy.messages[proxy.selectedMessageIndex]))
+	}
+
+	return proxy, tea.Batch(cmds...)
 }
 func (p ProxyModel) View() string {
 	var res string
@@ -492,6 +510,41 @@ var keyMap = KeyMap{
 	),
 }
 
+type MessageViewModel struct {
+	viewedMessage *TCPMessage
+}
+
+type ViewMessageMsg struct {
+	message *TCPMessage
+}
+
+func CreateViewMsgCmd(message *TCPMessage) tea.Cmd {
+	return func() tea.Msg {
+		return ViewMessageMsg{message}
+	}
+}
+
+func (*MessageViewModel) Init() tea.Cmd {
+	return nil
+}
+func (m *MessageViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case ViewMessageMsg:
+		m.viewedMessage = msg.message
+	}
+	
+	return m, nil
+}
+func (m *MessageViewModel) View() string {
+	if m.viewedMessage == nil {
+		return "No message to view"
+	}
+
+	return hex.Dump(m.viewedMessage.Content())
+}
+
+var messageView = &MessageViewModel{}
+
 func (Console) Init() tea.Cmd                         { return nil }
 func (c Console) Update(tea.Msg) (tea.Model, tea.Cmd) { return c, nil }
 func (c Console) View() string                        { return c.name + "\n\n" + c.String() }
@@ -505,6 +558,7 @@ func MakeModel(proxy ProxyModel, debugConsole Console) Model {
 		VerticalStacked: true,
 		Children: []boxer.Node{
 			Must(m.tui.CreateLeaf("main", proxy)),
+			Must(m.tui.CreateLeaf("messageView", messageView)),
 			Must(m.tui.CreateLeaf("debug", debugConsole)),
 		},
 	}
@@ -543,6 +597,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			return m, m.UpdateNode(msg, "main")
 		}
+	case ViewMessageMsg:
+		return m, m.UpdateNode(msg, "messageView")
 	case tea.WindowSizeMsg:
 		m.tui.UpdateSize(msg)
 	case TickMsg:
@@ -556,10 +612,7 @@ func (m Model) View() string {
 }
 
 func main() {
-	proxy := ProxyModel{
-		&Proxy{args: getArgs()},
-		0,
-	}
+	proxy := MakeProxyModel(&Proxy{args: getArgs()})
 	debugConsole := Console{
 		Builder: new(strings.Builder),
 		name:    "Debug Console",
