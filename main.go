@@ -1,17 +1,14 @@
 package main
 
 import (
-	"context"
 	"encoding/hex"
 	"flag"
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"os"
 	"os/exec"
 	"strings"
-	"time"
 
 	"github.com/Denloob/protocol-proxy/styles"
 	"github.com/Denloob/protocol-proxy/symbols"
@@ -69,136 +66,32 @@ func forward(source io.Reader, dest io.Writer, handleTransmittion func([]byte) [
 	}
 }
 
-func (proxy *Proxy) createTransmittionHandler(transmittionDirection tcpmessage.TransmittionDirection) func(buffer []byte) []byte {
-	return func(buffer []byte) []byte {
-		message := tcpmessage.New(transmittionDirection, buffer)
-
-		proxy.AddMessage(message)
-
-		message.WaitForTransmittion()
-
-		return message.Content()
-	}
+type editBufferInEditorMsg struct {
+	newBuffer []byte
+	err       error
 }
 
-type Model struct {
-	tui *boxer.Boxer
-}
-
-func (p *Proxy) AddMessage(message *tcpmessage.TCPMessage) {
-	p.messages = append(p.messages, message)
-}
-
-type Proxy struct {
-	args                 Args
-	messages             []*tcpmessage.TCPMessage
-	vieweingMessage      bool
-	selectedMessageIndex int
-}
-
-type TickMsg time.Time
-
-func Tick() tea.Msg {
-	return TickMsg(time.Now())
-}
-
-func NewProxy(args Args) *Proxy {
-	return &Proxy{
-		args:                 args,
-		messages:             nil,
-		vieweingMessage:      false,
-		selectedMessageIndex: -1,
-	}
-}
-
-func (p *Proxy) tick() tea.Cmd {
-	if len(p.messages) > 0 && p.selectedMessageIndex == -1 {
-		p.selectedMessageIndex = 0
-
-		return CreateViewMsgCmd(p.messages[p.selectedMessageIndex])
-	}
-
-	return nil
-}
-
-func (p *Proxy) Init() tea.Cmd {
-	return func() tea.Msg {
-		go p.Run()
-		return Tick()
-	}
-}
-func (p *Proxy) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmds tea.BatchMsg
-
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		newProxy, cmd := keyMap.Handle(p, msg)
-		p = newProxy.(*Proxy)
-		cmds = append(cmds, cmd)
-	case TickMsg:
-		cmds = append(cmds, Tick)
-		cmds = append(cmds, p.tick())
-	case editBufferInEditorMsg:
-		if msg.err != nil {
-			log.Printf("error during message editing: %v\n", msg.err)
-		} else {
-			p.messages[p.selectedMessageIndex].SetContent(msg.newBuffer)
-		}
-	}
-
-	return p, tea.Batch(cmds...)
-}
-func (p *Proxy) View() string {
-	var res string
-	for i, message := range p.messages {
-		line := fmt.Sprintf("%d. %v", i+1, message)
-
-		style := styles.Unstyled
-
-		if p.vieweingMessage {
-			if i == p.selectedMessageIndex {
-				style = styles.UnfocusedSelected
-			} else {
-				style = styles.Unfocused
-			}
-		} else if i == p.selectedMessageIndex {
-			style = styles.Selected
-		}
-
-		line = style.Render(line)
-		res += line + "\n"
-	}
-
-	return res
-}
-func (proxy *Proxy) Run() {
-	l, err := net.Listen("tcp", fmt.Sprintf(":%d", proxy.args.inPort))
+func editBufferInEditor(buffer []byte) (tea.Cmd, error) {
+	tempfile, err := os.CreateTemp("", "hexdump*.bin")
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
-	defer l.Close()
 
-	for {
-		conn, err := l.Accept()
-		if err != nil {
-			log.Fatal(err)
-		}
+	filename := tempfile.Name()
 
-		go func(inConn net.Conn) {
-			var dialer net.Dialer
+	tempfile.Write(buffer)
+	tempfile.Close()
 
-			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-			defer cancel()
+	editor := os.Getenv("EDITOR")
 
-			outConn, err := dialer.DialContext(ctx, "tcp", fmt.Sprintf("%s:%d", proxy.args.outIP, proxy.args.outPort))
-			if err != nil {
-				log.Fatalf("Failed to dial: %v", err)
-			}
+	cmd := exec.Command(editor, filename)
 
-			go forward(inConn, outConn, proxy.createTransmittionHandler(tcpmessage.TRANSMITTION_DIRECTION_TO_SERVER))
-			go forward(outConn, inConn, proxy.createTransmittionHandler(tcpmessage.TRANSMITTION_DIRECTION_TO_CLIENT))
-		}(conn)
-	}
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		defer os.Remove(tempfile.Name())
+
+		newBuffer, err := os.ReadFile(filename)
+		return editBufferInEditorMsg{newBuffer, err}
+	}), nil
 }
 
 type KeyMap interface {
@@ -250,38 +143,11 @@ func (k *MainKeyMap) Handle(model tea.Model, msg tea.KeyMsg) (tea.Model, tea.Cmd
 	}
 
 	if selectedMessageChanged {
-		return proxy, CreateViewMsgCmd(proxy.messages[proxy.selectedMessageIndex])
+		currentMessage := Must(proxy.SelectedMessage())
+		return proxy, CreateViewMsgCmd(currentMessage)
 	}
 
 	return proxy, nil
-}
-
-type editBufferInEditorMsg struct {
-	newBuffer []byte
-	err       error
-}
-
-func editBufferInEditor(buffer []byte) (tea.Cmd, error) {
-	tempfile, err := os.CreateTemp("", "hexdump*.bin")
-	if err != nil {
-		return nil, err
-	}
-
-	filename := tempfile.Name()
-
-	tempfile.Write(buffer)
-	tempfile.Close()
-
-	editor := os.Getenv("EDITOR")
-
-	cmd := exec.Command(editor, filename)
-
-	return tea.ExecProcess(cmd, func(err error) tea.Msg {
-		defer os.Remove(tempfile.Name())
-
-		newBuffer, err := os.ReadFile(filename)
-		return editBufferInEditorMsg{newBuffer, err}
-	}), nil
 }
 
 type ViewMessageKeyMap struct {
@@ -315,7 +181,13 @@ func (k ViewMessageKeyMap) Handle(model tea.Model, msg tea.KeyMsg) (tea.Model, t
 		proxy.vieweingMessage = false
 		keyMap = mainKeymap
 	case key.Matches(msg, k.Edit):
-		messageContent := proxy.messages[proxy.selectedMessageIndex].Content()
+		message, err := proxy.SelectedMessage()
+		if err != nil {
+			log.Printf("Can't edit message: %v", err)
+			return proxy, nil
+		}
+
+		messageContent := message.Content()
 		cmd, err := editBufferInEditor(messageContent)
 		if err != nil {
 			log.Printf("Edit in editor error: %s\n", err)
@@ -364,11 +236,15 @@ func (m *MessageViewModel) View() string {
 
 	hexdump := hex.Dump(m.viewedMessage.Content())
 
-	if m.proxy.vieweingMessage {
+	if m.proxy.VieweingMessage() {
 		hexdump = styles.Selected.Render(hexdump)
 	}
 
 	return hexdump
+}
+
+type Model struct {
+	tui *boxer.Boxer
 }
 
 func MakeModel(proxy *Proxy, debugConsole *Console, messageView *MessageViewModel) Model {
