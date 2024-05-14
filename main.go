@@ -201,11 +201,6 @@ func (proxy *Proxy) Run() {
 	}
 }
 
-type Console struct {
-	*strings.Builder
-	name string
-}
-
 type KeyMap interface {
 	Handle(model tea.Model, keyMsg tea.KeyMsg) (tea.Model, tea.Cmd)
 }
@@ -376,11 +371,7 @@ func (m *MessageViewModel) View() string {
 	return hexdump
 }
 
-func (Console) Init() tea.Cmd                         { return nil }
-func (c Console) Update(tea.Msg) (tea.Model, tea.Cmd) { return c, nil }
-func (c Console) View() string                        { return c.name + "\n\n" + c.String() }
-
-func MakeModel(proxy *Proxy, debugConsole Console, messageView *MessageViewModel) Model {
+func MakeModel(proxy *Proxy, debugConsole *Console, messageView *MessageViewModel) Model {
 	m := Model{
 		tui: &boxer.Boxer{},
 	}
@@ -438,10 +429,7 @@ func main() {
 	symbols.CurrentMap = symbols.NerdFontMap
 
 	proxy := NewProxy(getArgs())
-	debugConsole := Console{
-		Builder: new(strings.Builder),
-		name:    "Debug Console",
-	}
+	debugConsole := NewConsole("Debug Console")
 	log.SetOutput(debugConsole)
 
 	program := tea.NewProgram(MakeModel(proxy, debugConsole, &MessageViewModel{nil, proxy}), tea.WithAltScreen())
