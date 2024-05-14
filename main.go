@@ -22,6 +22,8 @@ import (
 	boxer "github.com/treilik/bubbleboxer"
 )
 
+const DEFAULT_EXTRACT_STRINGS_MIN_LENGTH = 4
+
 type Args struct {
 	inPort  int
 	outPort int
@@ -67,40 +69,6 @@ func forward(source io.Reader, dest io.Writer, handleTransmittion func([]byte) [
 	}
 }
 
-func isCharacter(char byte) bool {
-	return ' ' <= char && char <= '~'
-}
-
-const DEFAULT_EXTRACT_STRINGS_MIN_LENGTH = 4
-
-func extractStrings(buffer []byte, minStringLength int) []string {
-	var foundStrings []string
-
-	var stringBegin int
-	insideString := false
-
-	for i, char := range buffer {
-		if !isCharacter(char) {
-			if insideString && i-stringBegin >= minStringLength {
-				foundStrings = append(foundStrings, string(buffer[stringBegin:i]))
-				insideString = false
-			}
-			continue
-		}
-
-		if !insideString {
-			insideString = true
-			stringBegin = i
-		}
-	}
-
-	if insideString && len(buffer)-stringBegin >= minStringLength {
-		foundStrings = append(foundStrings, string(buffer[stringBegin:]))
-	}
-
-	return foundStrings
-}
-
 func (proxy *Proxy) createTransmittionHandler(transmittionDirection tcpmessage.TransmittionDirection) func(buffer []byte) []byte {
 	return func(buffer []byte) []byte {
 		message := tcpmessage.New(transmittionDirection, buffer)
@@ -111,14 +79,6 @@ func (proxy *Proxy) createTransmittionHandler(transmittionDirection tcpmessage.T
 
 		return message.Content()
 	}
-}
-
-func Must[T any](t T, err error) T {
-	if err != nil {
-		panic(err)
-	}
-
-	return t
 }
 
 type Model struct {
