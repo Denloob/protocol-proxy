@@ -87,7 +87,10 @@ func (p *Proxy) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			log.Printf("error during message editing: %v\n", msg.err)
 		} else {
-			Must(p.SelectedMessage()).SetContent(msg.newBuffer)
+			err := Must(p.SelectedMessage()).SetContent(msg.newBuffer)
+			if err != nil {
+				log.Println(err)
+			}
 		}
 	}
 
