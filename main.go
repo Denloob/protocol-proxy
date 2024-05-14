@@ -153,7 +153,7 @@ func NewTCPMessage(transmittionDirection TransmittionDirection, content []byte) 
 	}
 }
 
-func (proxy *ProxyModel) createTransmittionHandler(transmittionDirection TransmittionDirection) func(buffer []byte) []byte {
+func (proxy *Proxy) createTransmittionHandler(transmittionDirection TransmittionDirection) func(buffer []byte) []byte {
 	return func(buffer []byte) []byte {
 		message := NewTCPMessage(transmittionDirection, buffer)
 
@@ -230,13 +230,9 @@ func (message TCPMessage) String() string {
 }
 
 type Proxy struct {
-	args            Args
-	messages        []*TCPMessage
-	vieweingMessage bool
-}
-
-type ProxyModel struct {
-	*Proxy
+	args                 Args
+	messages             []*TCPMessage
+	vieweingMessage      bool
 	selectedMessageIndex int
 }
 
@@ -246,11 +242,16 @@ func Tick() tea.Msg {
 	return TickMsg(time.Now())
 }
 
-func MakeProxyModel(proxy *Proxy) ProxyModel {
-	return ProxyModel{Proxy: proxy, selectedMessageIndex: -1}
+func NewProxy(args Args) *Proxy {
+	return &Proxy{
+		args:                 args,
+		messages:             nil,
+		vieweingMessage:      false,
+		selectedMessageIndex: -1,
+	}
 }
 
-func (p *ProxyModel) tick() tea.Cmd {
+func (p *Proxy) tick() tea.Cmd {
 	if len(p.messages) > 0 && p.selectedMessageIndex == -1 {
 		p.selectedMessageIndex = 0
 
@@ -260,19 +261,19 @@ func (p *ProxyModel) tick() tea.Cmd {
 	return nil
 }
 
-func (p ProxyModel) Init() tea.Cmd {
+func (p *Proxy) Init() tea.Cmd {
 	return func() tea.Msg {
 		go p.Run()
 		return Tick()
 	}
 }
-func (p ProxyModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (p *Proxy) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds tea.BatchMsg
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		newProxy, cmd := keyMap.Handle(p, msg)
-		p = newProxy.(ProxyModel)
+		p = newProxy.(*Proxy)
 		cmds = append(cmds, cmd)
 	case TickMsg:
 		cmds = append(cmds, Tick)
@@ -287,7 +288,7 @@ func (p ProxyModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	return p, tea.Batch(cmds...)
 }
-func (p ProxyModel) View() string {
+func (p *Proxy) View() string {
 	var res string
 	for i, message := range p.messages {
 		line := fmt.Sprintf("%d. %v", i+1, message)
@@ -310,7 +311,7 @@ func (p ProxyModel) View() string {
 
 	return res
 }
-func (proxy ProxyModel) Run() {
+func (proxy *Proxy) Run() {
 	l, err := net.Listen("tcp", fmt.Sprintf(":%d", proxy.args.inPort))
 	if err != nil {
 		log.Fatal(err)
@@ -376,7 +377,7 @@ var mainKeymap = &MainKeyMap{
 }
 
 func (k *MainKeyMap) Handle(model tea.Model, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	proxy := model.(ProxyModel)
+	proxy := model.(*Proxy)
 	selectedMessageChanged := false
 
 	switch {
@@ -450,7 +451,7 @@ var messageViewKeymap = &ViewMessageKeyMap{
 }
 
 func (k ViewMessageKeyMap) Handle(model tea.Model, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	proxy := model.(ProxyModel)
+	proxy := model.(*Proxy)
 
 	switch {
 	case key.Matches(msg, k.Quit):
@@ -477,7 +478,7 @@ var keyMap KeyMap = mainKeymap
 type MessageViewModel struct {
 	viewedMessage *TCPMessage
 
-	proxy *ProxyModel
+	proxy *Proxy
 }
 
 type ViewMessageMsg struct {
@@ -519,7 +520,7 @@ func (Console) Init() tea.Cmd                         { return nil }
 func (c Console) Update(tea.Msg) (tea.Model, tea.Cmd) { return c, nil }
 func (c Console) View() string                        { return c.name + "\n\n" + c.String() }
 
-func MakeModel(proxy ProxyModel, debugConsole Console, messageView *MessageViewModel) Model {
+func MakeModel(proxy *Proxy, debugConsole Console, messageView *MessageViewModel) Model {
 	m := Model{
 		tui: &boxer.Boxer{},
 	}
@@ -574,14 +575,14 @@ func (m Model) View() string {
 }
 
 func main() {
-	proxy := MakeProxyModel(&Proxy{args: getArgs()})
+	proxy := NewProxy(getArgs())
 	debugConsole := Console{
 		Builder: new(strings.Builder),
 		name:    "Debug Console",
 	}
 	log.SetOutput(debugConsole)
 
-	program := tea.NewProgram(MakeModel(proxy, debugConsole, &MessageViewModel{nil, &proxy}), tea.WithAltScreen())
+	program := tea.NewProgram(MakeModel(proxy, debugConsole, &MessageViewModel{nil, proxy}), tea.WithAltScreen())
 	if _, err := program.Run(); err != nil {
 		log.Printf("There's been an error: %v", err)
 		os.Exit(1)
