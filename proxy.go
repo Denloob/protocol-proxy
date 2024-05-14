@@ -10,6 +10,7 @@ import (
 	"github.com/Denloob/protocol-proxy/styles"
 	"github.com/Denloob/protocol-proxy/tcpmessage"
 
+	"github.com/charmbracelet/bubbles/help"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -23,6 +24,8 @@ type Proxy struct {
 	args                 Args
 	messages             []*tcpmessage.TCPMessage
 	selectedMessageIndex int
+	help                 help.Model
+	windowSize           tea.WindowSizeMsg
 }
 
 func NewProxy(args Args) *Proxy {
@@ -30,6 +33,7 @@ func NewProxy(args Args) *Proxy {
 		args:                 args,
 		messages:             nil,
 		selectedMessageIndex: -1,
+		help:                 help.New(),
 	}
 }
 
@@ -67,6 +71,12 @@ func (p *Proxy) Init() tea.Cmd {
 	}
 }
 
+type ShowFullHelpMsg struct{}
+
+func ShowFullHelpCmd() tea.Msg {
+	return ShowFullHelpMsg{}
+}
+
 func (p *Proxy) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds tea.BatchMsg
 
@@ -75,8 +85,12 @@ func (p *Proxy) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		newProxy, cmd := keyMap.Handle(p, msg)
 		p = newProxy.(*Proxy)
 		cmds = append(cmds, cmd)
+	case tea.WindowSizeMsg:
+		p.windowSize = msg
 	case TickMsg:
 		cmds = append(cmds, Tick, p.tick())
+	case ShowFullHelpMsg:
+		p.help.ShowAll = !p.help.ShowAll
 	case editBufferInEditorMsg:
 		if msg.err != nil {
 			log.Printf("error during message editing: %v\n", msg.err)
@@ -90,6 +104,8 @@ func (p *Proxy) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	return p, tea.Batch(cmds...)
 }
+
+var fflag = true
 
 func (p *Proxy) View() string {
 	var res string
@@ -106,7 +122,7 @@ func (p *Proxy) View() string {
 		res += line + "\n"
 	}
 
-	return res
+	return PutOnTheBottomOfView(res, p.help.View(keyMap), p.windowSize.Height)
 }
 
 func (proxy *Proxy) Run() {

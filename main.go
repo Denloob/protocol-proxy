@@ -95,10 +95,14 @@ func editBufferInEditor(buffer []byte) (tea.Cmd, error) {
 
 type KeyMap interface {
 	Handle(model tea.Model, keyMsg tea.KeyMsg) (tea.Model, tea.Cmd)
+
+	ShortHelp() []key.Binding
+	FullHelp() [][]key.Binding
 }
 
 type MainKeyMap struct {
 	Quit,
+	Help,
 	Up,
 	Down,
 	Drop,
@@ -106,31 +110,37 @@ type MainKeyMap struct {
 	Edit key.Binding
 }
 
-var mainKeymap = &MainKeyMap{
-	Quit: key.NewBinding(
-		key.WithKeys("q", "ctrl+c"),
-		key.WithHelp("q", "quit"),
-	),
-	Up: key.NewBinding(
-		key.WithKeys("k", "up"),
-		key.WithHelp(symbols.CurrentMap[symbols.ScArrowUp]+"/k", "move up"),
-	),
-	Down: key.NewBinding(
-		key.WithKeys("j", "down"),
-		key.WithHelp(symbols.CurrentMap[symbols.ScArrowDown]+"/j", "move down"),
-	),
-	Drop: key.NewBinding(
-		key.WithKeys("d"),
-		key.WithHelp("d", "drop"),
-	),
-	Transmit: key.NewBinding(
-		key.WithKeys("t"),
-		key.WithHelp("t", "transmit"),
-	),
-	Edit: key.NewBinding(
-		key.WithKeys("e"),
-		key.WithHelp("e", "edit"),
-	),
+func NewMainKeymap() *MainKeyMap {
+	return &MainKeyMap{
+		Quit: key.NewBinding(
+			key.WithKeys("q", "ctrl+c"),
+			key.WithHelp("q", "quit"),
+		),
+		Help: key.NewBinding(
+			key.WithKeys("h"),
+			key.WithHelp("h", "show extended help"),
+		),
+		Up: key.NewBinding(
+			key.WithKeys("k", "up"),
+			key.WithHelp(symbols.CurrentMap[symbols.ScArrowUp]+"/k", "move up"),
+		),
+		Down: key.NewBinding(
+			key.WithKeys("j", "down"),
+			key.WithHelp(symbols.CurrentMap[symbols.ScArrowDown]+"/j", "move down"),
+		),
+		Drop: key.NewBinding(
+			key.WithKeys("d"),
+			key.WithHelp("d", "drop"),
+		),
+		Transmit: key.NewBinding(
+			key.WithKeys("t"),
+			key.WithHelp("t", "transmit"),
+		),
+		Edit: key.NewBinding(
+			key.WithKeys("e"),
+			key.WithHelp("e", "edit"),
+		),
+	}
 }
 
 func (k *MainKeyMap) Handle(model tea.Model, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -140,6 +150,8 @@ func (k *MainKeyMap) Handle(model tea.Model, msg tea.KeyMsg) (tea.Model, tea.Cmd
 	switch {
 	case key.Matches(msg, k.Quit):
 		return proxy, tea.Quit
+	case key.Matches(msg, k.Help):
+		return proxy, ShowFullHelpCmd
 	case key.Matches(msg, k.Up) && proxy.selectedMessageIndex > 0:
 		proxy.selectedMessageIndex--
 		selectedMessageChanged = true
@@ -186,7 +198,19 @@ func (k *MainKeyMap) Handle(model tea.Model, msg tea.KeyMsg) (tea.Model, tea.Cmd
 	return proxy, nil
 }
 
-var keyMap KeyMap = mainKeymap
+func (k MainKeyMap) ShortHelp() []key.Binding {
+	return []key.Binding{k.Quit, k.Help}
+}
+
+func (k MainKeyMap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{
+		{k.Up, k.Down},
+		{k.Transmit, k.Edit, k.Drop},
+		{k.Quit, k.Help},
+	}
+}
+
+var keyMap KeyMap
 
 type MessageViewModel struct {
 	viewedMessage *tcpmessage.TCPMessage
@@ -231,6 +255,13 @@ func MakeModel(proxy *Proxy, debugConsole *Console, messageView *MessageViewMode
 	}
 
 	m.tui.LayoutTree = boxer.Node{
+		SizeFunc: func(node boxer.Node, height int) []int {
+			return []int{
+				height / 2,
+				height / 4,
+				height / 4,
+			}
+		},
 		VerticalStacked: true,
 		Children: []boxer.Node{
 			Must(m.tui.CreateLeaf("main", proxy)),
@@ -269,7 +300,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.UpdateNode(msg, "messageView")
 	case tea.WindowSizeMsg:
 		m.tui.UpdateSize(msg)
-	case TickMsg, editBufferInEditorMsg:
+		m.UpdateNode(tea.WindowSizeMsg{Height: msg.Height/2 - 1, Width: msg.Width}, "main")
+	case TickMsg, editBufferInEditorMsg, ShowFullHelpMsg:
 		return m, m.UpdateNode(msg, "main")
 	}
 	return m, nil
@@ -281,6 +313,8 @@ func (m Model) View() string {
 
 func main() {
 	symbols.CurrentMap = symbols.NerdFontMap
+
+	keyMap = NewMainKeymap()
 
 	proxy := NewProxy(getArgs())
 	debugConsole := NewConsole("Debug Console")
