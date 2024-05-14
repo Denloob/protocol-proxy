@@ -22,7 +22,6 @@ func Tick() tea.Msg {
 type Proxy struct {
 	args                 Args
 	messages             []*tcpmessage.TCPMessage
-	vieweingMessage      bool
 	selectedMessageIndex int
 }
 
@@ -30,13 +29,8 @@ func NewProxy(args Args) *Proxy {
 	return &Proxy{
 		args:                 args,
 		messages:             nil,
-		vieweingMessage:      false,
 		selectedMessageIndex: -1,
 	}
-}
-
-func (p *Proxy) VieweingMessage() bool {
-	return p.vieweingMessage
 }
 
 func (p *Proxy) SelectedMessage() (*tcpmessage.TCPMessage, error) {
@@ -104,13 +98,7 @@ func (p *Proxy) View() string {
 
 		style := styles.Unstyled
 
-		if p.vieweingMessage {
-			if i == p.selectedMessageIndex {
-				style = styles.UnfocusedSelected
-			} else {
-				style = styles.Unfocused
-			}
-		} else if i == p.selectedMessageIndex {
+		if i == p.selectedMessageIndex {
 			style = styles.Selected
 		}
 

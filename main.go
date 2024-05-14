@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/Denloob/protocol-proxy/styles"
 	"github.com/Denloob/protocol-proxy/symbols"
 	"github.com/Denloob/protocol-proxy/tcpmessage"
 
@@ -100,9 +99,11 @@ type KeyMap interface {
 
 type MainKeyMap struct {
 	Quit,
-	View,
 	Up,
-	Down key.Binding
+	Down,
+	Drop,
+	Transmit,
+	Edit key.Binding
 }
 
 var mainKeymap = &MainKeyMap{
@@ -118,9 +119,17 @@ var mainKeymap = &MainKeyMap{
 		key.WithKeys("j", "down"),
 		key.WithHelp(symbols.CurrentMap[symbols.ScArrowDown]+"/j", "move down"),
 	),
-	View: key.NewBinding(
-		key.WithKeys("space", "enter"),
-		key.WithHelp(symbols.CurrentMap[symbols.ScSpace]+"/"+symbols.CurrentMap[symbols.ScEnter], "transmit"),
+	Drop: key.NewBinding(
+		key.WithKeys("d"),
+		key.WithHelp("d", "drop"),
+	),
+	Transmit: key.NewBinding(
+		key.WithKeys("t"),
+		key.WithHelp("t", "transmit"),
+	),
+	Edit: key.NewBinding(
+		key.WithKeys("e"),
+		key.WithHelp("e", "edit"),
 	),
 }
 
@@ -137,9 +146,36 @@ func (k *MainKeyMap) Handle(model tea.Model, msg tea.KeyMsg) (tea.Model, tea.Cmd
 	case key.Matches(msg, k.Down) && proxy.selectedMessageIndex < len(proxy.messages)-1:
 		proxy.selectedMessageIndex++
 		selectedMessageChanged = true
-	case key.Matches(msg, k.View) && len(proxy.messages) > 0:
-		proxy.vieweingMessage = true
-		keyMap = messageViewKeymap
+	case key.Matches(msg, k.Drop), key.Matches(msg, k.Transmit), key.Matches(msg, k.Edit):
+		message, err := proxy.SelectedMessage()
+		if err != nil {
+			log.Println(err)
+			return proxy, nil
+		}
+
+		switch {
+		case key.Matches(msg, k.Drop):
+			err := message.Drop()
+			if err != nil {
+				log.Printf("Drop error: %s\n", err)
+				return proxy, nil
+			}
+		case key.Matches(msg, k.Transmit):
+			err := message.Transmit()
+			if err != nil {
+				log.Printf("Transmittion error: %s\n", err)
+				return proxy, nil
+			}
+		case key.Matches(msg, k.Edit):
+			messageContent := message.Content()
+			cmd, err := editBufferInEditor(messageContent)
+			if err != nil {
+				log.Printf("Edit in editor error: %s\n", err)
+				return proxy, nil
+			}
+
+			return proxy, cmd
+		}
 	}
 
 	if selectedMessageChanged {
@@ -150,84 +186,10 @@ func (k *MainKeyMap) Handle(model tea.Model, msg tea.KeyMsg) (tea.Model, tea.Cmd
 	return proxy, nil
 }
 
-type ViewMessageKeyMap struct {
-	Quit,
-	ExitView,
-	Drop,
-	Transmit,
-	Edit key.Binding
-}
-
-var messageViewKeymap = &ViewMessageKeyMap{
-	Quit: key.NewBinding(
-		key.WithKeys("Q", "ctrl+c"),
-		key.WithHelp("Q", "quit"),
-	),
-	ExitView: key.NewBinding(
-		key.WithKeys("q", "esc"),
-		key.WithHelp("q/esc", "exit view"),
-	),
-	Drop: key.NewBinding(
-		key.WithKeys("d"),
-		key.WithHelp("d", "drop"),
-	),
-	Transmit: key.NewBinding(
-		key.WithKeys("t"),
-		key.WithHelp("t", "transmit"),
-	),
-	Edit: key.NewBinding(
-		key.WithKeys("e"),
-		key.WithHelp("e", "edit"),
-	),
-}
-
-func (k ViewMessageKeyMap) Handle(model tea.Model, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	proxy := model.(*Proxy)
-
-	message, err := proxy.SelectedMessage()
-	if err != nil {
-		log.Printf("Can't view message: %v", err)
-		return proxy, nil
-	}
-
-	switch {
-	case key.Matches(msg, k.Quit):
-		return proxy, tea.Quit
-	case key.Matches(msg, k.ExitView):
-		proxy.vieweingMessage = false
-		keyMap = mainKeymap
-	case key.Matches(msg, k.Drop):
-		err := message.Drop()
-		if err != nil {
-			log.Printf("Drop error: %s\n", err)
-			return proxy, nil
-		}
-	case key.Matches(msg, k.Transmit):
-		err := message.Transmit()
-		if err != nil {
-			log.Printf("Transmittion error: %s\n", err)
-			return proxy, nil
-		}
-	case key.Matches(msg, k.Edit):
-		messageContent := message.Content()
-		cmd, err := editBufferInEditor(messageContent)
-		if err != nil {
-			log.Printf("Edit in editor error: %s\n", err)
-			return proxy, nil
-		}
-
-		return proxy, cmd
-	}
-
-	return proxy, nil
-}
-
 var keyMap KeyMap = mainKeymap
 
 type MessageViewModel struct {
 	viewedMessage *tcpmessage.TCPMessage
-
-	proxy *Proxy
 }
 
 type ViewMessageMsg struct {
@@ -256,13 +218,7 @@ func (m *MessageViewModel) View() string {
 		return "No message to view"
 	}
 
-	hexdump := hex.Dump(m.viewedMessage.Content())
-
-	if m.proxy.VieweingMessage() {
-		hexdump = styles.Selected.Render(hexdump)
-	}
-
-	return hexdump
+	return hex.Dump(m.viewedMessage.Content())
 }
 
 type Model struct {
@@ -330,7 +286,7 @@ func main() {
 	debugConsole := NewConsole("Debug Console")
 	log.SetOutput(debugConsole)
 
-	program := tea.NewProgram(MakeModel(proxy, debugConsole, &MessageViewModel{nil, proxy}), tea.WithAltScreen())
+	program := tea.NewProgram(MakeModel(proxy, debugConsole, &MessageViewModel{}), tea.WithAltScreen())
 	if _, err := program.Run(); err != nil {
 		log.Printf("There's been an error: %v", err)
 		os.Exit(1)
