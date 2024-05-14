@@ -15,13 +15,12 @@ import (
 
 	"github.com/Denloob/protocol-proxy/styles"
 	"github.com/Denloob/protocol-proxy/symbols"
+	"github.com/Denloob/protocol-proxy/tcpmessage"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	boxer "github.com/treilik/bubbleboxer"
 )
-
-var symbolMap = symbols.NerdFontMap
 
 type Args struct {
 	inPort  int
@@ -102,66 +101,15 @@ func extractStrings(buffer []byte, minStringLength int) []string {
 	return foundStrings
 }
 
-type TransmittionDirection int
-
-const (
-	TRANSMITTION_DIRECTION_TO_SERVER TransmittionDirection = iota
-	TRANSMITTION_DIRECTION_TO_CLIENT
-)
-
-func (direction TransmittionDirection) String() string {
-	switch direction {
-	case TRANSMITTION_DIRECTION_TO_SERVER:
-		return symbolMap[symbols.ScArrowLeft]
-	case TRANSMITTION_DIRECTION_TO_CLIENT:
-		return symbolMap[symbols.ScArrowRight]
-	default:
-		panic("Invalid direction")
-	}
-}
-
-type Status int
-
-const (
-	STATUS_PENDING Status = iota
-	STATUS_TRANSMITED
-	STATUS_DROPPED
-)
-
-func (status Status) String() string {
-	switch status {
-	case STATUS_PENDING:
-		return symbolMap[symbols.ScClock]
-	case STATUS_TRANSMITED:
-		return symbolMap[symbols.ScSentMail]
-	case STATUS_DROPPED:
-		return symbolMap[symbols.ScTrashCan]
-	default:
-		panic("Invalid status")
-	}
-}
-
-func NewTCPMessage(transmittionDirection TransmittionDirection, content []byte) *TCPMessage {
-	return &TCPMessage{
-		content:   content,
-		edited:    false,
-		status:    STATUS_PENDING,
-		time:      time.Now(),
-		direction: transmittionDirection,
-
-		transmitChan: make(chan bool),
-	}
-}
-
-func (proxy *Proxy) createTransmittionHandler(transmittionDirection TransmittionDirection) func(buffer []byte) []byte {
+func (proxy *Proxy) createTransmittionHandler(transmittionDirection tcpmessage.TransmittionDirection) func(buffer []byte) []byte {
 	return func(buffer []byte) []byte {
-		message := NewTCPMessage(transmittionDirection, buffer)
+		message := tcpmessage.New(transmittionDirection, buffer)
 
-		proxy.messages = append(proxy.messages, message)
+		proxy.AddMessage(message)
 
-		<-message.transmitChan
+		message.WaitForTransmittion()
 
-		return message.content
+		return message.Content()
 	}
 }
 
@@ -177,61 +125,13 @@ type Model struct {
 	tui *boxer.Boxer
 }
 
-type TCPMessage struct {
-	content   []byte
-	edited    bool
-	status    Status
-	time      time.Time
-	direction TransmittionDirection
-
-	transmitChan chan bool
-}
-
-func (message *TCPMessage) Transmit() error {
-	switch message.status {
-	case STATUS_PENDING:
-		message.status = STATUS_TRANSMITED
-
-	case STATUS_TRANSMITED:
-		return fmt.Errorf("The message was already transmitted. Can't retransmit.")
-	case STATUS_DROPPED:
-		return fmt.Errorf("The message was dropped. Can't transmit.")
-	default:
-		return fmt.Errorf("The message cannot be transmitted.")
-	}
-
-	message.transmitChan <- true
-
-	return nil
-}
-
-func (message TCPMessage) SetContent(newContent []byte) error {
-	if message.status != STATUS_PENDING {
-		return fmt.Errorf("The message can no longer be edited.")
-	}
-
-	message.content = newContent
-	message.edited = true
-
-	return nil
-}
-
-func (message TCPMessage) Content() []byte {
-	return message.content
-}
-
-func (message TCPMessage) String() string {
-	messageState := message.status.String()
-	if message.edited {
-		messageState += " " + symbolMap[symbols.ScPen]
-	}
-
-	return fmt.Sprintf("[%v] %v %v (%v bytes)", message.time.Format(time.TimeOnly), messageState, message.direction, len(message.content))
+func (p *Proxy) AddMessage(message *tcpmessage.TCPMessage) {
+	p.messages = append(p.messages, message)
 }
 
 type Proxy struct {
 	args                 Args
-	messages             []*TCPMessage
+	messages             []*tcpmessage.TCPMessage
 	vieweingMessage      bool
 	selectedMessageIndex int
 }
@@ -282,7 +182,7 @@ func (p *Proxy) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			log.Printf("error during message editing: %v\n", msg.err)
 		} else {
-			p.messages[p.selectedMessageIndex].content = msg.newBuffer
+			p.messages[p.selectedMessageIndex].SetContent(msg.newBuffer)
 		}
 	}
 
@@ -335,8 +235,8 @@ func (proxy *Proxy) Run() {
 				log.Fatalf("Failed to dial: %v", err)
 			}
 
-			go forward(inConn, outConn, proxy.createTransmittionHandler(TRANSMITTION_DIRECTION_TO_SERVER))
-			go forward(outConn, inConn, proxy.createTransmittionHandler(TRANSMITTION_DIRECTION_TO_CLIENT))
+			go forward(inConn, outConn, proxy.createTransmittionHandler(tcpmessage.TRANSMITTION_DIRECTION_TO_SERVER))
+			go forward(outConn, inConn, proxy.createTransmittionHandler(tcpmessage.TRANSMITTION_DIRECTION_TO_CLIENT))
 		}(conn)
 	}
 }
@@ -364,15 +264,15 @@ var mainKeymap = &MainKeyMap{
 	),
 	Up: key.NewBinding(
 		key.WithKeys("k", "up"),
-		key.WithHelp(symbolMap[symbols.ScArrowUp]+"/k", "move up"),
+		key.WithHelp(symbols.CurrentMap[symbols.ScArrowUp]+"/k", "move up"),
 	),
 	Down: key.NewBinding(
 		key.WithKeys("j", "down"),
-		key.WithHelp(symbolMap[symbols.ScArrowDown]+"/j", "move down"),
+		key.WithHelp(symbols.CurrentMap[symbols.ScArrowDown]+"/j", "move down"),
 	),
 	View: key.NewBinding(
 		key.WithKeys("space", "enter"),
-		key.WithHelp(symbolMap[symbols.ScSpace]+"/"+symbolMap[symbols.ScEnter], "transmit"),
+		key.WithHelp(symbols.CurrentMap[symbols.ScSpace]+"/"+symbols.CurrentMap[symbols.ScEnter], "transmit"),
 	),
 }
 
@@ -460,7 +360,7 @@ func (k ViewMessageKeyMap) Handle(model tea.Model, msg tea.KeyMsg) (tea.Model, t
 		proxy.vieweingMessage = false
 		keyMap = mainKeymap
 	case key.Matches(msg, k.Edit):
-		messageContent := proxy.messages[proxy.selectedMessageIndex].content
+		messageContent := proxy.messages[proxy.selectedMessageIndex].Content()
 		cmd, err := editBufferInEditor(messageContent)
 		if err != nil {
 			log.Printf("Edit in editor error: %s\n", err)
@@ -476,16 +376,16 @@ func (k ViewMessageKeyMap) Handle(model tea.Model, msg tea.KeyMsg) (tea.Model, t
 var keyMap KeyMap = mainKeymap
 
 type MessageViewModel struct {
-	viewedMessage *TCPMessage
+	viewedMessage *tcpmessage.TCPMessage
 
 	proxy *Proxy
 }
 
 type ViewMessageMsg struct {
-	message *TCPMessage
+	message *tcpmessage.TCPMessage
 }
 
-func CreateViewMsgCmd(message *TCPMessage) tea.Cmd {
+func CreateViewMsgCmd(message *tcpmessage.TCPMessage) tea.Cmd {
 	return func() tea.Msg {
 		return ViewMessageMsg{message}
 	}
@@ -575,6 +475,8 @@ func (m Model) View() string {
 }
 
 func main() {
+	symbols.CurrentMap = symbols.NerdFontMap
+
 	proxy := NewProxy(getArgs())
 	debugConsole := Console{
 		Builder: new(strings.Builder),

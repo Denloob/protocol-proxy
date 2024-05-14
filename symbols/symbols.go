@@ -48,3 +48,5 @@ var DefaultMap = SymbolMap{
 	ScPen:      "🖋️",
 	ScSentMail: "📨",
 }
+
+var CurrentMap SymbolMap
