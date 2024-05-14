@@ -82,9 +82,29 @@ func (message *TCPMessage) Transmit() error {
 	case STATUS_DROPPED:
 		return fmt.Errorf("The message was dropped. Can't transmit.")
 	default:
-		return fmt.Errorf("The message cannot be transmitted.")
+		panic("Invalid status")
 	}
 
+	message.transmitChan <- true
+
+	return nil
+}
+
+func (message *TCPMessage) Drop() error {
+	switch message.status {
+	case STATUS_PENDING:
+		message.status = STATUS_DROPPED
+
+	case STATUS_TRANSMITED:
+		return fmt.Errorf("The message was already transmitted. Can't drop.")
+	case STATUS_DROPPED:
+		return fmt.Errorf("The message was dropped. Can't drop again.")
+	default:
+		panic("Invalid status")
+	}
+
+	// Transmitting content of nil will drop the message.
+	message.content = nil
 	message.transmitChan <- true
 
 	return nil

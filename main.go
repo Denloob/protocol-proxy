@@ -153,6 +153,8 @@ func (k *MainKeyMap) Handle(model tea.Model, msg tea.KeyMsg) (tea.Model, tea.Cmd
 type ViewMessageKeyMap struct {
 	Quit,
 	ExitView,
+	Drop,
+	Transmit,
 	Edit key.Binding
 }
 
@@ -165,6 +167,14 @@ var messageViewKeymap = &ViewMessageKeyMap{
 		key.WithKeys("q", "esc"),
 		key.WithHelp("q/esc", "exit view"),
 	),
+	Drop: key.NewBinding(
+		key.WithKeys("d"),
+		key.WithHelp("d", "drop"),
+	),
+	Transmit: key.NewBinding(
+		key.WithKeys("t"),
+		key.WithHelp("t", "transmit"),
+	),
 	Edit: key.NewBinding(
 		key.WithKeys("e"),
 		key.WithHelp("e", "edit"),
@@ -174,19 +184,31 @@ var messageViewKeymap = &ViewMessageKeyMap{
 func (k ViewMessageKeyMap) Handle(model tea.Model, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	proxy := model.(*Proxy)
 
+	message, err := proxy.SelectedMessage()
+	if err != nil {
+		log.Printf("Can't view message: %v", err)
+		return proxy, nil
+	}
+
 	switch {
 	case key.Matches(msg, k.Quit):
 		return proxy, tea.Quit
 	case key.Matches(msg, k.ExitView):
 		proxy.vieweingMessage = false
 		keyMap = mainKeymap
-	case key.Matches(msg, k.Edit):
-		message, err := proxy.SelectedMessage()
+	case key.Matches(msg, k.Drop):
+		err := message.Drop()
 		if err != nil {
-			log.Printf("Can't edit message: %v", err)
+			log.Printf("Drop error: %s\n", err)
 			return proxy, nil
 		}
-
+	case key.Matches(msg, k.Transmit):
+		err := message.Transmit()
+		if err != nil {
+			log.Printf("Transmittion error: %s\n", err)
+			return proxy, nil
+		}
+	case key.Matches(msg, k.Edit):
 		messageContent := message.Content()
 		cmd, err := editBufferInEditor(messageContent)
 		if err != nil {
