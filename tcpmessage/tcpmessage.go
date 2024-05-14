@@ -68,7 +68,9 @@ func New(transmittionDirection TransmittionDirection, content []byte) *TCPMessag
 	}
 }
 
-func (message *TCPMessage) WaitForTransmittion() (ok bool) {
+// WaitForTransmittion waits for a signal to transmit. If the signal is true,
+// the message content shall be transmitted. Otherwise, it shall be dropped.
+func (message *TCPMessage) WaitForTransmittion() (transmit bool) {
 	return <-message.transmitChan
 }
 
@@ -103,9 +105,7 @@ func (message *TCPMessage) Drop() error {
 		panic("Invalid status")
 	}
 
-	// Transmitting content of nil will drop the message.
-	message.content = nil
-	message.transmitChan <- true
+	message.transmitChan <- false
 
 	return nil
 }

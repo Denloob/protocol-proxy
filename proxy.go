@@ -57,7 +57,10 @@ func (proxy *Proxy) CreateTransmittionHandler(transmittionDirection tcpmessage.T
 
 		proxy.AddMessage(message)
 
-		message.WaitForTransmittion()
+		transmit := message.WaitForTransmittion()
+		if !transmit {
+			return nil
+		}
 
 		return message.Content()
 	}
