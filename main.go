@@ -52,7 +52,7 @@ func forward(source io.Reader, dest io.Writer, handleTransmittion func([]byte) [
 
 		go func() {
 			newBuffer := handleTransmittion(buffer[:size])
-			if newBuffer == nil { // Message dropped, skip
+			if len(newBuffer) == 0 { // Message dropped, skip
 				return
 			}
 
