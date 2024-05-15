@@ -26,6 +26,18 @@ use iptables to route any type of tcp traffic through the protocol proxy.
 
 ![Image of the protocol proxy TUI intercepting a website connection](./images/demo.png)
 
+Additionally, you may configure the TUI to use NerdFont symbols instead of unicode.
+
+To do this change the line in [main.go](./main.go) from
+```go
+symbols.CurrentMap = symbols.DefaultMap
+```
+to
+```go
+symbols.CurrentMap = symbols.NerdFontMap
+```
+It's one of the last lines in the file.
+
 ## Building and running
 Clone the project, `go build`, and run the `protocol-proxy` executable
 

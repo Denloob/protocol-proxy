@@ -430,7 +430,7 @@ func (m Model) View() string {
 }
 
 func main() {
-	symbols.CurrentMap = symbols.NerdFontMap
+	symbols.CurrentMap = symbols.DefaultMap
 
 	keyMap = NewMainKeymap()
 
