@@ -105,6 +105,9 @@ type MainKeyMap struct {
 	Help,
 	Up,
 	Down,
+	DisplayHex,
+	DisplayHexdump,
+	DisplayStrings,
 	Drop,
 	Transmit,
 	Edit key.Binding
@@ -119,6 +122,18 @@ func NewMainKeymap() *MainKeyMap {
 		Help: key.NewBinding(
 			key.WithKeys("h"),
 			key.WithHelp("h", "show extended help"),
+		),
+		DisplayHex: key.NewBinding(
+			key.WithKeys("X"),
+			key.WithHelp("X", "show message hex"),
+		),
+		DisplayHexdump: key.NewBinding(
+			key.WithKeys("x"),
+			key.WithHelp("x", "show message hexdump"),
+		),
+		DisplayStrings: key.NewBinding(
+			key.WithKeys("s"),
+			key.WithHelp("s", "show message strings"),
 		),
 		Up: key.NewBinding(
 			key.WithKeys("k", "up"),
@@ -155,6 +170,12 @@ func (k *MainKeyMap) Handle(model tea.Model, msg tea.KeyMsg) (tea.Model, tea.Cmd
 	case key.Matches(msg, k.Up) && proxy.selectedMessageIndex > 0:
 		proxy.selectedMessageIndex--
 		selectedMessageChanged = true
+	case key.Matches(msg, k.DisplayHex):
+		return proxy, CreateChangeMessageDisplayMethodCmd(MESSAGE_DISPLAY_METHOD_HEX)
+	case key.Matches(msg, k.DisplayHexdump):
+		return proxy, CreateChangeMessageDisplayMethodCmd(MESSAGE_DISPLAY_METHOD_HEXDUMP)
+	case key.Matches(msg, k.DisplayStrings):
+		return proxy, CreateChangeMessageDisplayMethodCmd(MESSAGE_DISPLAY_METHOD_STRINGS)
 	case key.Matches(msg, k.Down) && proxy.selectedMessageIndex < len(proxy.messages)-1:
 		proxy.selectedMessageIndex++
 		selectedMessageChanged = true
@@ -206,14 +227,31 @@ func (k MainKeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down},
 		{k.Transmit, k.Edit, k.Drop},
+		{k.DisplayHex, k.DisplayHexdump, k.DisplayStrings},
 		{k.Quit, k.Help},
 	}
 }
 
 var keyMap KeyMap
 
+type MessageDisplayMethod int
+
+const (
+	MESSAGE_DISPLAY_METHOD_HEXDUMP MessageDisplayMethod = iota
+	MESSAGE_DISPLAY_METHOD_STRINGS
+	MESSAGE_DISPLAY_METHOD_HEX
+)
+
+func CreateChangeMessageDisplayMethodCmd(method MessageDisplayMethod) tea.Cmd {
+	return func() tea.Msg {
+		return method
+	}
+}
+
 type MessageViewModel struct {
 	viewedMessage *tcpmessage.TCPMessage
+
+	displayMethod MessageDisplayMethod
 }
 
 type ViewMessageMsg struct {
@@ -233,6 +271,8 @@ func (m *MessageViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case ViewMessageMsg:
 		m.viewedMessage = msg.message
+	case MessageDisplayMethod:
+		m.displayMethod = msg
 	}
 
 	return m, nil
@@ -242,7 +282,19 @@ func (m *MessageViewModel) View() string {
 		return "No message to view"
 	}
 
-	return hex.Dump(m.viewedMessage.Content())
+	messageContent := m.viewedMessage.Content()
+
+	switch m.displayMethod {
+	case MESSAGE_DISPLAY_METHOD_HEXDUMP:
+		return hex.Dump(messageContent)
+	case MESSAGE_DISPLAY_METHOD_STRINGS:
+		extractedStrings := ExtractStrings([]byte(messageContent), DEFAULT_EXTRACT_STRINGS_MIN_LENGTH)
+		return strings.Join(extractedStrings, "\n")
+	case MESSAGE_DISPLAY_METHOD_HEX:
+		return fmt.Sprintf("%x", messageContent)
+	default:
+		panic("invalid message display method")
+	}
 }
 
 type Model struct {
@@ -296,7 +348,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		return m, m.UpdateNode(msg, "main")
-	case ViewMessageMsg:
+	case ViewMessageMsg, MessageDisplayMethod:
 		return m, m.UpdateNode(msg, "messageView")
 	case tea.WindowSizeMsg:
 		m.tui.UpdateSize(msg)
