@@ -9,6 +9,7 @@ const (
 	ScArrowLeft
 
 	ScSpace
+	ScShift
 	ScEnter
 
 	ScTrashCan
@@ -26,6 +27,7 @@ var NerdFontMap = SymbolMap{
 	ScArrowLeft:  " ",
 
 	ScSpace: "󱁐 ",
+	ScShift: "󰘶 ",
 	ScEnter: "↵",
 
 	ScTrashCan: " ",
@@ -41,6 +43,7 @@ var DefaultMap = SymbolMap{
 	ScArrowLeft:  "←",
 
 	ScSpace: "␣",
+	ScShift: "⇧",
 	ScEnter: "↵",
 
 	ScTrashCan: "🗑",

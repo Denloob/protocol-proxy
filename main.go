@@ -105,6 +105,8 @@ type MainKeyMap struct {
 	Help,
 	Up,
 	Down,
+	MessageUp,
+	MessageDown,
 	DisplayHex,
 	DisplayHexdump,
 	DisplayStrings,
@@ -143,6 +145,14 @@ func NewMainKeymap() *MainKeyMap {
 			key.WithKeys("j", "down"),
 			key.WithHelp(symbols.CurrentMap[symbols.ScArrowDown]+"/j", "move down"),
 		),
+		MessageUp: key.NewBinding(
+			key.WithKeys("K", "shift+up"),
+			key.WithHelp(symbols.CurrentMap[symbols.ScShift]+"+"+symbols.CurrentMap[symbols.ScArrowUp]+"/K", "move down"),
+		),
+		MessageDown: key.NewBinding(
+			key.WithKeys("J", "shift+down"),
+			key.WithHelp(symbols.CurrentMap[symbols.ScShift]+"+"+symbols.CurrentMap[symbols.ScArrowDown]+"/J", "move down"),
+		),
 		Drop: key.NewBinding(
 			key.WithKeys("d"),
 			key.WithHelp("d", "drop"),
@@ -170,6 +180,10 @@ func (k *MainKeyMap) Handle(model tea.Model, msg tea.KeyMsg) (tea.Model, tea.Cmd
 	case key.Matches(msg, k.Up) && proxy.selectedMessageIndex > 0:
 		proxy.selectedMessageIndex--
 		selectedMessageChanged = true
+	case key.Matches(msg, k.MessageUp):
+		return proxy, CreateScrollMessageViewCmd(ScrollMessageViewUp)
+	case key.Matches(msg, k.MessageDown):
+		return proxy, CreateScrollMessageViewCmd(ScrollMessageViewDown)
 	case key.Matches(msg, k.DisplayHex):
 		return proxy, CreateChangeMessageDisplayMethodCmd(MESSAGE_DISPLAY_METHOD_HEX)
 	case key.Matches(msg, k.DisplayHexdump):
@@ -227,6 +241,7 @@ func (k MainKeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down},
 		{k.Transmit, k.Edit, k.Drop},
+		{k.MessageUp, k.MessageDown},
 		{k.DisplayHex, k.DisplayHexdump, k.DisplayStrings},
 		{k.Quit, k.Help},
 	}
@@ -252,10 +267,25 @@ type MessageViewModel struct {
 	viewedMessage *tcpmessage.TCPMessage
 
 	displayMethod MessageDisplayMethod
+	windowSize    tea.WindowSizeMsg
+	scroll        int
 }
 
 type ViewMessageMsg struct {
 	message *tcpmessage.TCPMessage
+}
+
+type ScrollMessageViewMsg int
+
+const (
+	ScrollMessageViewUp   = -1
+	ScrollMessageViewDown = 1
+)
+
+func CreateScrollMessageViewCmd(scroll int) tea.Cmd {
+	return func() tea.Msg {
+		return ScrollMessageViewMsg(scroll)
+	}
 }
 
 func CreateViewMsgCmd(message *tcpmessage.TCPMessage) tea.Cmd {
@@ -264,20 +294,54 @@ func CreateViewMsgCmd(message *tcpmessage.TCPMessage) tea.Cmd {
 	}
 }
 
+func (m *MessageViewModel) maxScroll() int {
+	return max(CountLines(m.renderWrapped())-m.windowSize.Height-1, 0)
+}
+
 func (*MessageViewModel) Init() tea.Cmd {
 	return nil
 }
 func (m *MessageViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.windowSize = msg
 	case ViewMessageMsg:
 		m.viewedMessage = msg.message
+		m.scroll = 0
 	case MessageDisplayMethod:
 		m.displayMethod = msg
+		m.scroll = 0
+	case ScrollMessageViewMsg:
+		m.scroll += int(msg)
+		m.scroll = Clamp(m.scroll, 0, m.maxScroll())
 	}
 
 	return m, nil
 }
 func (m *MessageViewModel) View() string {
+	lines := strings.Split(m.renderWrapped(), "\n")
+
+	begin := m.scroll
+	end := min(begin+m.windowSize.Height, len(lines))
+	return strings.Join(lines[begin:end], "\n")
+}
+
+func (m *MessageViewModel) renderWrapped() string {
+	lines := strings.Split(m.render(), "\n")
+
+	// Wrap is not supported for hexdump display
+	if m.displayMethod != MESSAGE_DISPLAY_METHOD_HEXDUMP {
+		var wrappedLines [][]string
+		for _, line := range lines {
+			wrappedLines = append(wrappedLines, WrapLine(line, m.windowSize.Width))
+		}
+		lines = Flatten(wrappedLines)
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func (m *MessageViewModel) render() string {
 	if m.viewedMessage == nil {
 		return "No message to view"
 	}
@@ -348,11 +412,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		return m, m.UpdateNode(msg, "main")
-	case ViewMessageMsg, MessageDisplayMethod:
+	case ViewMessageMsg, MessageDisplayMethod, ScrollMessageViewMsg:
 		return m, m.UpdateNode(msg, "messageView")
 	case tea.WindowSizeMsg:
 		m.tui.UpdateSize(msg)
 		m.UpdateNode(tea.WindowSizeMsg{Height: msg.Height/2 - 1, Width: msg.Width}, "main")
+		m.UpdateNode(tea.WindowSizeMsg{Height: msg.Height/4 - 1, Width: msg.Width}, "messageView")
 	case TickMsg, editBufferInEditorMsg, ShowFullHelpMsg:
 		return m, m.UpdateNode(msg, "main")
 	}
