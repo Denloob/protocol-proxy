@@ -107,7 +107,16 @@ func (p *Proxy) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (p *Proxy) View() string {
 	var res string
-	for i, message := range p.messages {
+	availableLines := p.windowSize.Height - CountLines(p.help.View(keyMap)) - 1
+
+	begin := p.selectedMessageIndex - availableLines/2
+	begin = max(begin, 0)
+	end := begin + availableLines
+	end = min(end, len(p.messages))
+
+	for i, message := range p.messages[begin:end] {
+		i += begin // Offset i to be the index in p.messages instead the index in the [begin:end] slice
+
 		line := fmt.Sprintf("%d. %v", i+1, message)
 
 		style := styles.Unstyled
