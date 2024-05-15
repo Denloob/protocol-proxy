@@ -105,8 +105,6 @@ func (p *Proxy) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return p, tea.Batch(cmds...)
 }
 
-var fflag = true
-
 func (p *Proxy) View() string {
 	var res string
 	for i, message := range p.messages {
