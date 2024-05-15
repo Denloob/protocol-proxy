@@ -418,6 +418,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.tui.UpdateSize(msg)
 		m.UpdateNode(tea.WindowSizeMsg{Height: msg.Height/2 - 1, Width: msg.Width}, "main")
 		m.UpdateNode(tea.WindowSizeMsg{Height: msg.Height/4 - 1, Width: msg.Width}, "messageView")
+		m.UpdateNode(tea.WindowSizeMsg{Height: msg.Height/4 - 1, Width: msg.Width}, "debug")
 	case TickMsg, editBufferInEditorMsg, ShowFullHelpMsg:
 		return m, m.UpdateNode(msg, "main")
 	}
