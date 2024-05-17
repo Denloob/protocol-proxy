@@ -26,6 +26,7 @@ type Proxy struct {
 	selectedMessageIndex int
 	help                 help.Model
 	windowSize           tea.WindowSizeMsg
+	autoTransmit         bool
 }
 
 func NewProxy(args Args) *Proxy {
@@ -34,7 +35,12 @@ func NewProxy(args Args) *Proxy {
 		messages:             nil,
 		selectedMessageIndex: -1,
 		help:                 help.New(),
+		autoTransmit:         false,
 	}
+}
+
+func (p *Proxy) AutoTransmit() bool {
+	return p.autoTransmit
 }
 
 func (p *Proxy) SelectedMessage() (*tcpmessage.TCPMessage, error) {
@@ -55,9 +61,13 @@ func (proxy *Proxy) CreateTransmittionHandler(transmittionDirection tcpmessage.T
 
 		proxy.AddMessage(message)
 
-		transmit := message.WaitForTransmittion()
-		if !transmit {
-			return nil
+		if proxy.AutoTransmit() {
+			message.MarkAsTransmited()
+		} else {
+			transmit := message.WaitForTransmittion()
+			if !transmit {
+				return nil
+			}
 		}
 
 		return message.Content()
@@ -77,6 +87,14 @@ func ShowFullHelpCmd() tea.Msg {
 	return ShowFullHelpMsg{}
 }
 
+type AutoTransmitMsg bool
+
+func CreateAutoTransmitCmd(autoTransmit bool) tea.Cmd {
+	return func() tea.Msg {
+		return AutoTransmitMsg(autoTransmit)
+	}
+}
+
 func (p *Proxy) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds tea.BatchMsg
 
@@ -87,6 +105,8 @@ func (p *Proxy) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cmd)
 	case tea.WindowSizeMsg:
 		p.windowSize = msg
+	case AutoTransmitMsg:
+		p.autoTransmit = bool(msg)
 	case TickMsg:
 		cmds = append(cmds, Tick, p.tick())
 	case ShowFullHelpMsg:

@@ -74,7 +74,10 @@ func (message *TCPMessage) WaitForTransmittion() (transmit bool) {
 	return <-message.transmitChan
 }
 
-func (message *TCPMessage) Transmit() error {
+// MarkAsTransmited marks the message as transmited without notifying anobody
+// waiting for transmittion. Use only when nobody is waiting for transmittion.
+// no calls to Transmit/MarkAsTransmited will be possible after this call.
+func (message *TCPMessage) MarkAsTransmited() error {
 	switch message.status {
 	case STATUS_PENDING:
 		message.status = STATUS_TRANSMITED
@@ -85,6 +88,17 @@ func (message *TCPMessage) Transmit() error {
 		return fmt.Errorf("The message was dropped. Can't transmit.")
 	default:
 		panic("Invalid status")
+	}
+
+	return nil
+}
+
+// Transmit marks the packet as transmited and notifies everybody waiting with
+// WaitForTransmittion about the transmittion.
+func (message *TCPMessage) Transmit() error {
+	err := message.MarkAsTransmited()
+	if err != nil {
+		return err
 	}
 
 	message.transmitChan <- true

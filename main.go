@@ -112,6 +112,7 @@ type MainKeyMap struct {
 	DisplayStrings,
 	Drop,
 	Transmit,
+	ToggleAutoTransmit,
 	Edit key.Binding
 }
 
@@ -161,6 +162,10 @@ func NewMainKeymap() *MainKeyMap {
 			key.WithKeys("t"),
 			key.WithHelp("t", "transmit"),
 		),
+		ToggleAutoTransmit: key.NewBinding(
+			key.WithKeys("T"),
+			key.WithHelp("T", "toggle auto transmit"),
+		),
 		Edit: key.NewBinding(
 			key.WithKeys("e"),
 			key.WithHelp("e", "edit"),
@@ -193,6 +198,8 @@ func (k *MainKeyMap) Handle(model tea.Model, msg tea.KeyMsg) (tea.Model, tea.Cmd
 	case key.Matches(msg, k.Down) && proxy.selectedMessageIndex < len(proxy.messages)-1:
 		proxy.selectedMessageIndex++
 		selectedMessageChanged = true
+	case key.Matches(msg, k.ToggleAutoTransmit):
+		return proxy, CreateAutoTransmitCmd(!proxy.AutoTransmit())
 	case key.Matches(msg, k.Drop), key.Matches(msg, k.Transmit), key.Matches(msg, k.Edit):
 		message, err := proxy.SelectedMessage()
 		if err != nil {
@@ -241,6 +248,7 @@ func (k MainKeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down},
 		{k.Transmit, k.Edit, k.Drop},
+		{k.ToggleAutoTransmit},
 		{k.MessageUp, k.MessageDown},
 		{k.DisplayHex, k.DisplayHexdump, k.DisplayStrings},
 		{k.Quit, k.Help},
@@ -419,7 +427,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.UpdateNode(tea.WindowSizeMsg{Height: msg.Height/2 - 1, Width: msg.Width}, "main")
 		m.UpdateNode(tea.WindowSizeMsg{Height: msg.Height/4 - 1, Width: msg.Width}, "messageView")
 		m.UpdateNode(tea.WindowSizeMsg{Height: msg.Height/4 - 1, Width: msg.Width}, "debug")
-	case TickMsg, editBufferInEditorMsg, ShowFullHelpMsg:
+	case TickMsg, editBufferInEditorMsg, ShowFullHelpMsg, AutoTransmitMsg:
 		return m, m.UpdateNode(msg, "main")
 	}
 	return m, nil
