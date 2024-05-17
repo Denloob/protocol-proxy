@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/Denloob/protocol-proxy/styles"
@@ -23,6 +24,7 @@ func Tick() tea.Msg {
 type Proxy struct {
 	args                 Args
 	messages             []*tcpmessage.TCPMessage
+	messagesMutex         sync.RWMutex
 	selectedMessageIndex int
 	help                 help.Model
 	windowSize           tea.WindowSizeMsg
@@ -44,6 +46,9 @@ func (p *Proxy) AutoTransmit() bool {
 }
 
 func (p *Proxy) SelectedMessage() (*tcpmessage.TCPMessage, error) {
+	p.messagesMutex.RLock()
+	defer p.messagesMutex.RUnlock()
+
 	if p.selectedMessageIndex == -1 {
 		return nil, fmt.Errorf("no message selected")
 	}
@@ -52,6 +57,9 @@ func (p *Proxy) SelectedMessage() (*tcpmessage.TCPMessage, error) {
 }
 
 func (p *Proxy) AddMessage(message *tcpmessage.TCPMessage) {
+	p.messagesMutex.Lock()
+	defer p.messagesMutex.Unlock()
+
 	p.messages = append(p.messages, message)
 }
 
@@ -126,6 +134,9 @@ func (p *Proxy) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (p *Proxy) View() string {
+	p.messagesMutex.RLock()
+	defer p.messagesMutex.RUnlock()
+
 	var res string
 	availableLines := p.windowSize.Height - CountLines(p.help.View(keyMap)) - 1
 
@@ -185,6 +196,9 @@ func (proxy *Proxy) Run() {
 // tick "ticks" the state of the Proxy, updating everything that should be
 // updated every tick
 func (p *Proxy) tick() tea.Cmd {
+	p.messagesMutex.RLock()
+	defer p.messagesMutex.RUnlock()
+
 	if len(p.messages) > 0 && p.selectedMessageIndex == -1 {
 		p.selectedMessageIndex = 0
 

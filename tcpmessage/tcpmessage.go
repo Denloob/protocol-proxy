@@ -2,21 +2,30 @@ package tcpmessage
 
 import (
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/Denloob/protocol-proxy/symbols"
 )
 
-type Status int
+type statusRaw int32
+type Status struct{ val atomic.Int32 }
+
+func (s *Status) Status() statusRaw {
+	return statusRaw(s.val.Load())
+}
+func (s *Status) SetStatus(value statusRaw) {
+	s.val.Store(int32(value))
+}
 
 const (
-	STATUS_PENDING Status = iota
+	STATUS_PENDING statusRaw = iota
 	STATUS_TRANSMITED
 	STATUS_DROPPED
 )
 
-func (status Status) String() string {
-	switch status {
+func (status *Status) String() string {
+	switch status.Status() {
 	case STATUS_PENDING:
 		return symbols.CurrentMap[symbols.ScClock]
 	case STATUS_TRANSMITED:
@@ -57,15 +66,18 @@ type TCPMessage struct {
 }
 
 func New(transmittionDirection TransmittionDirection, content []byte) *TCPMessage {
-	return &TCPMessage{
+	m := &TCPMessage{
 		content:   content,
 		edited:    false,
-		status:    STATUS_PENDING,
 		time:      time.Now(),
 		direction: transmittionDirection,
 
 		transmitChan: make(chan bool),
 	}
+
+	m.status.SetStatus(STATUS_PENDING)
+
+	return m
 }
 
 // WaitForTransmittion waits for a signal to transmit. If the signal is true,
@@ -78,9 +90,9 @@ func (message *TCPMessage) WaitForTransmittion() (transmit bool) {
 // waiting for transmittion. Use only when nobody is waiting for transmittion.
 // no calls to Transmit/MarkAsTransmited will be possible after this call.
 func (message *TCPMessage) MarkAsTransmited() error {
-	switch message.status {
+	switch message.status.Status() {
 	case STATUS_PENDING:
-		message.status = STATUS_TRANSMITED
+		message.status.SetStatus(STATUS_TRANSMITED)
 
 	case STATUS_TRANSMITED:
 		return fmt.Errorf("The message was already transmitted. Can't retransmit.")
@@ -107,9 +119,9 @@ func (message *TCPMessage) Transmit() error {
 }
 
 func (message *TCPMessage) Drop() error {
-	switch message.status {
+	switch message.status.Status() {
 	case STATUS_PENDING:
-		message.status = STATUS_DROPPED
+		message.status.SetStatus(STATUS_DROPPED)
 
 	case STATUS_TRANSMITED:
 		return fmt.Errorf("The message was already transmitted. Can't drop.")
@@ -125,7 +137,7 @@ func (message *TCPMessage) Drop() error {
 }
 
 func (message *TCPMessage) SetContent(newContent []byte) error {
-	if message.status != STATUS_PENDING {
+	if message.status.Status() != STATUS_PENDING {
 		return fmt.Errorf("The message can no longer be edited.")
 	}
 
